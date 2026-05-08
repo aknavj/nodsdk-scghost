@@ -1,0 +1,42 @@
+# build output
+build/
+cmake/
+assets/
+
+# cmake generated
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+!src/**/CMakeLists.txt
+
+# compiled objects
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# clangd / compile_commands
+compile_commands.json
+.cache/
+
+# blender plugin zip
+plugin/*.zip
+
+# python cache
+**/__pycache__/
+*.pyc
+*.pyo
