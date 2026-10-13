@@ -15,6 +15,7 @@ An ongoing reverse-engineering effort focused on Nihilistic Software's NOD engin
 |---|---|
 | `src/parsers/` | C++17 static library — parsers for all major NOD asset formats |
 | `src/viewer/` | OpenGL asset browser with ImGui UI |
+| `src/tools/` | Standalone pure C NILtoMAP decompiler for GtkRadiant |
 | `plugin/bpy-nodsdk-scghost/` | Blender 4.x import plugin (NOD, NMB, NIL, NAD) |
 
 ### Parsed formats
@@ -85,6 +86,26 @@ cmake --build build/cmake --target nodsdk-viewer -j$(nproc)
 
 The binary and libraries are written to `cmake/`.
 
+### Model parser integration
+
+`NODParser` and `NMBParser` also expose `parseBuffer(data, size)` for hosts with
+their own virtual filesystem. The input is copied and remains caller-owned;
+parsed buffers belong to the parser until its next parse or destruction.
+`getLastError()` describes a failed parse. Truncated models, unsupported vertex
+layouts, excessive counts, and incomplete bundles are rejected rather than
+reported as successful models.
+NMB version-one entry boundaries, version-two optional vertex-colour streams,
+and tangent-bearing vertex types 3 through 5 are supported. The colour stream
+is exposed by each model entry and shares the parser's raw-buffer lifetime.
+Read-only validation on the supplied asset tree parsed all 1401 NOD files and
+40 NMB bundles successfully.
+
+`tests/model_parsers.cpp` is a standalone synthetic regression driver. Build
+it with `AssetParser.cpp`, `NODParser.cpp`, and `NMBParser.cpp`, using C++17 and
+the GLM headers. Run it without arguments for regression tests, or pass a NOD
+or NMB path for a read-only parser check. Keep generated objects/executables
+in a separate build directory. No proprietary assets are needed for the tests.
+
 ---
 
 ## Running the viewer
@@ -105,6 +126,24 @@ The browser panel on the left lets you browse by asset type. Click any entry to 
 - **NAD** — animation clip details
 - **NCE / NCS** — cutscene actor + event list
 - **XWB / XSB** — wave bank audio playback (via `aplay`)
+
+---
+
+## NILtoMAP CLI
+
+Convert NIL v35 render geometry into editable Quake III MAP triangle brushes:
+
+```bash
+cmake -S src/tools -B build/niltomap
+cmake --build build/niltomap --config Release
+NILtoMAP --thickness 1 input.nil output.map
+```
+
+Use the built executable's path (`build/niltomap/NILtoMAP`, or
+`build/niltomap/Release/NILtoMAP.exe` on Visual Studio). This dependency-free C99
+tool reconstructs approximate geometry, not original brush topology, UVs,
+lighting, or entities. See [NILtoMAP documentation](src/tools/README.md) for
+options, supported binary layout, tests, and limitations.
 
 ---
 

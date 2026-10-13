@@ -84,12 +84,22 @@ namespace {
 /*
  */
 NODParser::~NODParser() {
+	clear();
+}
 
+void NODParser::clear() {
 	free(m.bones);
 	free(m.vertex_data);
 	free(m.indices);
 	free(m.mesh_groups);
 	free(m.raw_data);
+	memset(&m, 0, sizeof(m));
+}
+
+int NODParser::fail(const char *message) {
+	last_error = message;
+	clear();
+	return 0;
 }
 
 /*
@@ -98,9 +108,26 @@ int NODParser::parse(const char *filePath) {
 
 	size_t file_size = 0;
 	uint8_t *data	 = FileUtils::readBinaryFile(filePath, &file_size);
+	return parseOwnedBuffer(data, file_size);
+}
+
+int NODParser::parseBuffer(const uint8_t *data, size_t size) {
+	if(!data || size < 0x5C || size > 256u * 1024u * 1024u) {
+		return fail("Invalid NOD buffer size");
+	}
+	uint8_t *copy = static_cast<uint8_t *>(malloc(size));
+	if(!copy) return fail("Unable to allocate NOD buffer");
+	memcpy(copy, data, size);
+	return parseOwnedBuffer(copy, size);
+}
+
+int NODParser::parseOwnedBuffer(uint8_t *data, size_t file_size) {
+	clear();
+	last_error.clear();
+	m.raw_data = data;
+	m.raw_data_size = file_size;
 	if(!data || file_size < 0x5C) {
-		free(data);
-		return 0;
+		return fail("Invalid or truncated NOD header");
 	}
 
 	m.file_size = file_size;
@@ -123,13 +150,17 @@ int NODParser::parse(const char *filePath) {
 		m.header.vertex_sets[i].count = FileUtils::readUInt32(data, 0x28 + i * 8);
 	}
 	m.header.index_count = FileUtils::readUInt32(data, 0x44);
+	if(m.header.shader_count > MAX_SHADERS || m.header.vertex_set_count > MAX_VERTEX_SETS ||
+	   m.header.index_count > 2000000) {
+		return fail("NOD header counts exceed supported limits");
+	}
 
 	size_t off = 0x5C;
 
 	// shader names
 	m.shader_count = m.header.shader_count;
 	for(uint32_t i = 0; i < m.shader_count && i < MAX_SHADERS; ++i) {
-		if(off + 32 > file_size) break;
+		if(off + 32 > file_size) return fail("Truncated NOD shader names");
 		memset(m.shader_names[i], 0, 33);
 		memcpy(m.shader_names[i], data + off, 32);
 		off += 32;
@@ -139,8 +170,9 @@ int NODParser::parse(const char *filePath) {
 	m.bone_count = m.header.bone_count;
 	if(m.bone_count > 0) {
 		m.bones = (Bone *)calloc(m.bone_count, sizeof(Bone));
+		if(!m.bones) return fail("Unable to allocate NOD bones");
 		for(uint32_t i = 0; i < m.bone_count; ++i) {
-			if(off + 64 > file_size) break;
+			if(off + 64 > file_size) return fail("Truncated NOD bones");
 			const uint8_t *b = data + off;
 			// position at +0x00 (12B)
 			memcpy(m.bones[i].position, b + 0, 12);
@@ -164,6 +196,7 @@ int NODParser::parse(const char *filePath) {
 	for(uint32_t i = 0; i < m.vertex_set_count && i < MAX_VERTEX_SETS; ++i) {
 		uint32_t type				 = m.header.vertex_sets[i].type;
 		uint32_t count				 = m.header.vertex_sets[i].count;
+		if(type > 5 || count > 500000) return fail("Unsupported NOD vertex type or count");
 		uint32_t stride				 = type_to_stride(type);
 		uint32_t bstride			 = base_stride(type);
 		m.vertex_sets[i].type		 = type;
@@ -171,33 +204,37 @@ int NODParser::parse(const char *filePath) {
 		m.vertex_sets[i].base_stride = bstride;
 		m.vertex_sets[i].count		 = count;
 		m.vertex_sets[i].data_offset = (uint32_t)totalVertBytes;
-		totalVertBytes += count * stride;
+		totalVertBytes += size_t(count) * stride;
 	}
 
 	if(off + totalVertBytes > file_size) {
-		printf("[NOD] Error: vertex data overflows file (need %zu at 0x%zX, file=%zu)\n", totalVertBytes, off,
-			   file_size);
-		free(data);
-		return 0;
+		return fail("Truncated NOD vertex data");
 	}
 
 	m.vertex_data_size = totalVertBytes;
-	m.vertex_data	   = (uint8_t *)malloc(totalVertBytes);
-	memcpy(m.vertex_data, data + off, totalVertBytes);
+	if(totalVertBytes) {
+		m.vertex_data = (uint8_t *)malloc(totalVertBytes);
+		if(!m.vertex_data) return fail("Unable to allocate NOD vertices");
+		memcpy(m.vertex_data, data + off, totalVertBytes);
+	}
 	off += totalVertBytes;
 
 	// index buffer (flat uint16 array)
 	m.index_count = m.header.index_count;
+	if(size_t(m.index_count) * 2 > file_size - off) return fail("Truncated NOD indices");
 	if(m.index_count > 0 && off + m.index_count * 2 <= file_size) {
 		m.indices = (uint16_t *)malloc(m.index_count * sizeof(uint16_t));
+		if(!m.indices) return fail("Unable to allocate NOD indices");
 		memcpy(m.indices, data + off, m.index_count * sizeof(uint16_t));
 		off += m.index_count * 2;
 	}
 
 	// mesh groups (56 bytes each)
 	m.mesh_group_count = m.header.mesh_group_count;
+	if(size_t(m.mesh_group_count) * 56 > file_size - off) return fail("Truncated NOD mesh groups");
 	if(m.mesh_group_count > 0 && off + m.mesh_group_count * 56 <= file_size) {
 		m.mesh_groups = (MeshGroup *)calloc(m.mesh_group_count, sizeof(MeshGroup));
+		if(!m.mesh_groups) return fail("Unable to allocate NOD mesh groups");
 
 		// track running index offset and per-set base vertex
 		uint32_t curIdxOff					= 0;
@@ -239,7 +276,10 @@ int NODParser::parse(const char *filePath) {
 			memcpy(mg->a_bones, buf + 0x21, 20);
 
 			// clamp to valid range
-			if(mg->vertex_set_index >= m.vertex_set_count) mg->vertex_set_index = 0;
+			if(mg->vertex_set_index >= m.vertex_set_count || mg->num_bones > 20 ||
+			   curIdxOff > m.index_count) {
+				return fail("Invalid NOD mesh group vertex set, palette or index range");
+			}
 
 			mg->base_vertex = baseVerts[mg->vertex_set_index];
 			baseVerts[mg->vertex_set_index] += baseVertAdvance;
@@ -250,11 +290,15 @@ int NODParser::parse(const char *filePath) {
 	// markers (count + 52 bytes each)
 	if(off + 4 <= file_size) {
 		m.marker_count = FileUtils::readUInt32(data, off);
-		off += 4 + m.marker_count * 52;
+		off += 4;
+		if(size_t(m.marker_count) > (file_size - off) / 52) return fail("Truncated NOD markers");
+		off += size_t(m.marker_count) * 52;
+	} else if(off != file_size) {
+		return fail("Truncated NOD marker count");
 	}
 
 	// print summary
-	printf("[NOD] %s: flags=0x%X, %u shaders, %u bones, %u vertex sets", filePath, m.header.flags, m.shader_count,
+	printf("[NOD] buffer: flags=0x%X, %u shaders, %u bones, %u vertex sets", m.header.flags, m.shader_count,
 		   m.bone_count, m.vertex_set_count);
 	for(uint32_t i = 0; i < m.vertex_set_count; ++i)
 		printf(" [S%u: type%u %u verts stride %u]", i, m.vertex_sets[i].type, m.vertex_sets[i].count,
