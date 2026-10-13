@@ -9,8 +9,23 @@
 #   app/       — BrowserView (controller) + ViewerApp (platform shell)
 
 find_package(OpenGL REQUIRED)
+find_package(Threads REQUIRED)
 find_package(glfw3 3.3 QUIET)
 find_package(GLEW QUIET)
+
+if(WIN32)
+    find_path(DIRENT_INCLUDE_DIR dirent.h)
+    if(NOT DIRENT_INCLUDE_DIR)
+        message(FATAL_ERROR "Windows viewer requires dirent.h; configure with the vcpkg toolchain.")
+    endif()
+    set(NODSDK_AUDIO_DEFAULT OFF)
+else()
+    set(NODSDK_AUDIO_DEFAULT ON)
+endif()
+option(NODSDK_ENABLE_AUDIO "Enable POSIX audio playback using aplay" ${NODSDK_AUDIO_DEFAULT})
+if(WIN32 AND NODSDK_ENABLE_AUDIO)
+    message(FATAL_ERROR "Windows audio playback is not supported. Set NODSDK_ENABLE_AUDIO=OFF.")
+endif()
 
 if(NOT glfw3_FOUND)
     find_package(PkgConfig)
@@ -21,6 +36,9 @@ endif()
 
 # ─── Dear ImGui (vendored, reuse from parsers/third_party) ──────────
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/src/parsers/third_party/imgui)
+if(NOT EXISTS "${IMGUI_DIR}/imgui.cpp")
+    message(FATAL_ERROR "ImGui is missing. Run git submodule update --init --recursive.")
+endif()
 
 if(NOT TARGET imgui_browser)
     add_library(imgui_browser STATIC
@@ -47,7 +65,6 @@ endif()
 add_executable(nodsdk-viewer
     main.cpp
 
-    # Audio (kept as-is)
     AudioPlayer.cpp
 
     # core/
@@ -84,11 +101,20 @@ target_include_directories(nodsdk-viewer PRIVATE
     ${CMAKE_SOURCE_DIR}/src
 )
 
+if(WIN32)
+    target_include_directories(nodsdk-viewer PRIVATE ${DIRENT_INCLUDE_DIR})
+    target_compile_definitions(nodsdk-viewer PRIVATE NOMINMAX)
+endif()
+if(NOT NODSDK_ENABLE_AUDIO)
+    target_compile_definitions(nodsdk-viewer PRIVATE NODSDK_AUDIO_DISABLED)
+    message(STATUS "Viewer audio playback disabled; audio inspection remains available")
+endif()
+
 target_link_libraries(nodsdk-viewer PRIVATE
     asset_parsers
     imgui_browser
     OpenGL::GL
-    pthread
+    Threads::Threads
 )
 
 if(glfw3_FOUND)
@@ -103,4 +129,15 @@ if(GLEW_FOUND)
     target_link_libraries(nodsdk-viewer PRIVATE GLEW::GLEW)
 else()
     target_link_libraries(nodsdk-viewer PRIVATE GLEW)
+endif()
+
+if(BUILD_TESTING AND NOT NODSDK_ENABLE_AUDIO)
+    add_executable(nodsdk-audio-disabled-tests
+        ${CMAKE_SOURCE_DIR}/tests/audio_disabled.cpp
+        AudioPlayer.cpp
+    )
+    target_include_directories(nodsdk-audio-disabled-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(nodsdk-audio-disabled-tests PRIVATE NODSDK_AUDIO_DISABLED)
+    target_link_libraries(nodsdk-audio-disabled-tests PRIVATE Threads::Threads)
+    add_test(NAME viewer-audio-disabled COMMAND nodsdk-audio-disabled-tests)
 endif()

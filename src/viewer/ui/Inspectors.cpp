@@ -820,6 +820,8 @@ void inspectXWB(IAssetParser *p, InspectorContext &ctx) {
 
 	ImGui::Text("XWB Wave Bank");
 	ImGui::Separator();
+	if(!AudioPlayer::isAvailable())
+		ImGui::TextDisabled("Audio playback is disabled in this build.");
 
 	if(ImGui::BeginTable("xwb_info", 2, ImGuiTableFlags_Borders)) {
 		ImGui::TableNextRow(); ImGui::TableNextColumn(); ImGui::Text("Bank Name");
@@ -872,7 +874,7 @@ void inspectXWB(IAssetParser *p, InspectorContext &ctx) {
 			const bool isThis = ctx.audio && ctx.audio->isPlaying() &&
 			                    ctx.playingEntry && *ctx.playingEntry == static_cast<int>(i);
 
-			if(e.codec == XWBParser::CODEC_WMA) {
+			if(e.codec == XWBParser::CODEC_WMA || !AudioPlayer::isAvailable()) {
 				ImGui::TextDisabled("n/a");
 			} else if(isThis) {
 				ImGui::PushID(static_cast<int>(i));
@@ -902,6 +904,8 @@ void inspectXWB(IAssetParser *p, InspectorContext &ctx) {
 /*
  */
 void inspectXSB(IAssetParser *p, InspectorContext &ctx) {
+	if(!AudioPlayer::isAvailable())
+		ImGui::TextDisabled("Audio playback is disabled in this build.");
 	auto *xsb = static_cast<XSBParser *>(p);
 	const auto &sb = xsb->getSoundBankData();
 
@@ -1012,7 +1016,9 @@ void inspectXSB(IAssetParser *p, InspectorContext &ctx) {
 					                    ctx.playingEntry && *ctx.playingEntry == rowId;
 
 					ImGui::PushID(rowId);
-					if(isThis) {
+					if(!AudioPlayer::isAvailable()) {
+						ImGui::TextDisabled("n/a");
+					} else if(isThis) {
 						if(ImGui::SmallButton("Stop")) {
 							ctx.audio->stop();
 							if(ctx.playingEntry) *ctx.playingEntry = -1;

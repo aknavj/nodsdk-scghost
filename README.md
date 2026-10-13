@@ -79,12 +79,47 @@ Blender 4.0 or later. No additional Python packages required.
 
 ## Build
 
+Initialize the pinned Dear ImGui dependency first:
+
+```bash
+git submodule update --init --recursive
+```
+
 ```bash
 cmake -B build/cmake
 cmake --build build/cmake --target nodsdk-viewer -j$(nproc)
 ```
 
 The binary and libraries are written to `cmake/`.
+
+### Windows viewer
+
+Use Visual Studio 2022 with the C++ desktop workload, CMake, and a recent
+standalone vcpkg checkout. Older Visual Studio-bundled vcpkg versions can have
+obsolete MSYS download URLs.
+The dependency manifest pins the registry baseline for GLFW, GLEW, GLM,
+and the Windows dirent compatibility header. In PowerShell, with
+`VCPKG_ROOT` pointing to the vcpkg installation:
+
+```powershell
+cmake -S . -B build\viewer -G "Visual Studio 17 2022" -A x64 `
+  "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+  -DNODSDK_ENABLE_AUDIO=OFF
+cmake --build build\viewer --config Release --target nodsdk-viewer --parallel
+& .\build\viewer\cmake\Release\nodsdk-viewer.exe "C:\path\to\StarCraft Ghost"
+```
+
+Windows defaults to audio playback disabled: wave-bank inspection still works,
+but playback controls show `n/a` and the inspector explains why. Linux/macOS
+retain the existing POSIX backend by default. Model and texture previews are
+not disabled. The viewer reads the asset directory; it does not modify assets.
+
+With `BUILD_TESTING` enabled (the default), check the disabled backend with:
+
+```powershell
+cmake --build build\viewer --config Release --target nodsdk-audio-disabled-tests
+ctest --test-dir build\viewer -C Release -R "^viewer-audio-disabled$" --output-on-failure
+```
 
 ### Model parser integration
 

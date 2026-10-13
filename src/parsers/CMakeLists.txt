@@ -37,6 +37,10 @@ set(PARSER_SOURCES
 add_library(asset_parsers STATIC ${PARSER_SOURCES})
 target_include_directories(asset_parsers PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
+if(MSVC)
+    target_compile_definitions(asset_parsers PRIVATE strcasecmp=_stricmp strtok_r=strtok_s)
+endif()
+
 if(glm_FOUND)
     target_link_libraries(asset_parsers PUBLIC glm::glm)
 else()
