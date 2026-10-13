@@ -210,7 +210,8 @@ int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, Mo
 		e->mesh_groups = (NODParser::MeshGroup *)calloc(e->mesh_group_count, sizeof(NODParser::MeshGroup));
 		if(!e->mesh_groups) goto fail;
 
-		uint32_t indexOffsets[NODParser::MAX_VERTEX_SETS] = {0};
+		// Index ranges are shared across vertex sets; vertex bases are per-set.
+		uint32_t indexOffset = 0;
 		uint32_t baseVerts[NODParser::MAX_VERTEX_SETS]	  = {0};
 
 		for(uint8_t g = 0; g < e->mesh_group_count; ++g) {
@@ -218,6 +219,10 @@ int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, Mo
 			NODParser::MeshGroup *mg = &e->mesh_groups[g];
 
 			memcpy(&mg->shader_index, data + pos, 4);
+			if(mg->shader_index >= e->shader_count) {
+				last_error = "Invalid NMB mesh shader at byte " + std::to_string(pos);
+				goto fail;
+			}
 			pos += 4;
 
 			mg->vertex_set_index = data[pos];
@@ -236,12 +241,16 @@ int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, Mo
 				pos += 6;
 
 				if(strip_count > 0 || list_count > 0 || lod == 0) {
-					mg->lods[lod].strip_start = indexOffsets[mg->vertex_set_index];
+					mg->lods[lod].strip_start = indexOffset;
 					mg->lods[lod].strip_count = strip_count;
-					mg->lods[lod].list_start  = indexOffsets[mg->vertex_set_index] + strip_count;
+					mg->lods[lod].list_start  = indexOffset + strip_count;
 					mg->lods[lod].list_count  = list_count;
 					mg->lods[lod].num_verts	  = num_verts;
-					indexOffsets[mg->vertex_set_index] += strip_count + list_count;
+					indexOffset += strip_count + list_count;
+					if(indexOffset > e->index_count) {
+						last_error = "NMB mesh index range exceeds the shared index buffer";
+						goto fail;
+					}
 				} else {
 					mg->lods[lod] = mg->lods[0];
 				}

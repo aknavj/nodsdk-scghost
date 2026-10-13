@@ -55,6 +55,31 @@ static void bundleEntry(Bytes &data, bool versionTwo = false, uint8_t vertexType
 	if(versionTwo) data.push_back(0);
 }
 
+static Bytes multiSetBundle() {
+	Bytes data(12 + 66, 0);
+	put32(data, 0, 1);
+	put32(data, 4, 1);
+	data[12] = 1;
+	data[14] = data[49] = 2;
+	for(uint8_t type : {uint8_t(0), uint8_t(1)}) {
+		data.push_back(type);
+		append32(data, type ? 4 : 3);
+		data.resize(data.size() + (type ? 4 * 36 : 3 * 32), 0);
+	}
+	append32(data, 6);
+	data.insert(data.end(), {0, 0, 1, 0, 2, 0, 1, 0, 2, 0, 3, 0});
+	data.resize(data.size() + 32, 0);
+	append32(data, 0);
+	for(uint8_t set : {uint8_t(0), uint8_t(1)}) {
+		const size_t group = data.size();
+		data.resize(group + 33, 0);
+		data[group + 4] = set;
+		data[group + 7] = 3;
+		data[group + 9] = set ? 4 : 3;
+	}
+	return data;
+}
+
 int main(int argc, char **argv) {
 	if(argc == 2) {
 		char extension[16];
@@ -128,5 +153,16 @@ int main(int argc, char **argv) {
 	assert(bundle.getBundleData().models[0].vertex_sets[0].stride == 68);
 	assert(bundle.getBundleData().models[0].vertex_sets[0].base_stride == 32);
 	assert(bundle.getBundleData().models[1].color_count == 0);
+	packed = multiSetBundle();
+	assert(bundle.parseBuffer(packed.data(), packed.size()));
+	const auto &entry = bundle.getBundleData().models[0];
+	assert(entry.mesh_groups[0].lods[0].list_start == 0);
+	assert(entry.mesh_groups[1].lods[0].list_start == 3);
+	assert(entry.indices[entry.mesh_groups[1].lods[0].list_start] == 1);
+	packed[packed.size() - 33 + 7] = 6;
+	assert(!bundle.parseBuffer(packed.data(), packed.size()));
+	packed = multiSetBundle();
+	packed[packed.size() - 33] = 1;
+	assert(!bundle.parseBuffer(packed.data(), packed.size()));
 	std::cout << "NOD/NMB parser regression tests passed\n";
 }
