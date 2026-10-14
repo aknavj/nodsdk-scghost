@@ -343,9 +343,16 @@ The primary level geometry format. Contains sector-based BSP/portal architecture
       float[3]  binormal
       float[3]  normal
 
-    [Lightmap Data: if lmFlag set]
-      uint32  lmPatchCount
-      ...patch data...
+    [Secondary Vertex Pool: if hasGeo >= 2]
+      uint8   secondaryVertType  Observed: 1 (with TBN)
+      uint32  secondaryVertCount
+      byte[]  vertices           secondaryVertCount × 36 bytes
+      byte[]  tbn                secondaryVertCount × 36 bytes
+      Previously labelled "lightmap patches" by the C++ parser.
+      NILtoMAP now selects this pool for bumped groups (vertType 3)
+      when the primary vertex pool has no TBN stream. Verified against
+      Hive level indices and group bounds; other secondary types remain
+      unsupported by the tool.
 
     uint16    numGroups    Surface group count
     [Surface Groups: numGroups entries, 47 bytes each]
