@@ -1,0 +1,50 @@
+/*QUAKED worldspawn (0.5 0.5 0.5) ?
+Empty container in model-based scenes; read-only brush preview in legacy scenes.
+NODscene preserves original NIL geometry; this is not a BSP or collision compiler.
+*/
+
+/*QUAKED nod_scene (0.6 0.6 0.6) (-4 -4 -4) (4 4 4)
+Immutable source binding. Do not edit, add, or delete.
+"nod_id" - Stable identity.
+"nod_schema" - Sidecar and geometry schema.
+"nod_sources" - Source checksums.
+*/
+
+/*QUAKED nod_nil_sector (0.2 0.7 1) (-8 -8 -8) (8 8 8)
+Read-only sector center, flags, and portal count; not a sector volume.
+*/
+
+/*QUAKED nod_nsd_entity (1 0.6 0.2) (-8 -8 -8) (8 8 8)
+Native scene point. Only origin, nod_rotation, and existing nod_sector are
+editable. All identity, type, region, model, and resolution fields are read-only.
+Trigger bounds and scripts remain opaque and preserved in the sidecar.
+The 16-unit box is a selection marker, not native bounds; nod_rotation does
+not visually rotate this placeholder.
+*/
+
+/*QUAKED misc_model (1 0.6 0.2) (-8 -8 -8) (8 8 8)
+NODscene editor alias for one native entity; not a Quake gameplay entity.
+Only origin, angles, and existing nod_sector are editable. Do not add/delete.
+Exception: nod_id "nil:world" and nod_role "nil_geometry" identify the static
+NIL world preview. ALL its fields, including origin and angles, are read-only.
+"angles" - GtkRadiant rotation, converted back to native orientation.
+"nod_rotation" - Read-only original native rotation; edit angles instead.
+"model" - Read-only native NOD/NMB path; NIL world and legacy previews use OBJ.
+"_frame" - Read-only zero-based NMB member index; NOD and NIL world use 0.
+Native previews use NOD Authoring materials and preserve scale 1.
+Native references, member identity, provenance, checksums, and status are
+read-only. Editing scales, frames, and remaps is not supported by the compiler.
+*/
+
+/*QUAKED nod_npd_waypoint (0.2 1 0.4) (-4 -4 -4) (4 4 4)
+Waypoint in native navigation space, not NIL/NSD world space.
+The 8-unit box is a selection marker; navigation-to-world mapping is unverified.
+Only origin, nod_flags, nod_color, and nod_extra are editable.
+Do not add/delete nodes. Identity, waypoint ID, and coordinate space are read-only.
+*/
+
+/*QUAKED nod_npd_link (0.4 0.7 0.4) (-2 -2 -2) (2 2 2)
+Native adjacency metadata at the origin, not a rendered edge.
+Only nod_from, nod_to, and nod_cost are editable; endpoints are record indices.
+Do not add/delete links.
+*/
