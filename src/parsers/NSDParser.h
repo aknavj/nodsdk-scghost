@@ -43,12 +43,17 @@ class NSDParser : public IAssetParser {
 			char model_name[64];  // model reference (from tag4 block, e.g. "door.nod")
 			char script_name[64]; // attached script/effect name (from tag 0xa1 at +140)
 			bool has_transform;	  // true if tag-validated block with position/rotation
-			bool has_model;		  // true if tag4 model name was found
+			bool has_model;		  // valid, nonempty tag4 model reference
+			bool has_model_override; // includes an explicit empty tag4 value
+			bool model_override_valid;
+			bool has_sector;
+			uint32_t sector;
+			char region_class[33];
 		};
 
 		struct SceneData {
 			uint32_t magic;
-			uint32_t entity_count;
+			uint32_t entity_count; // declared count at header offset 80
 
 			SceneEntity *entities;
 			uint32_t entity_array_count;
@@ -75,6 +80,9 @@ class NSDParser : public IAssetParser {
 		}
 
 		int parse(const char *filePath) override;
+		// Copies source bytes; parsing again invalidates previous entity/raw-data views.
+		int parseBuffer(const uint8_t *data, size_t size);
+		const char *getLastError() const { return last_error; }
 		int serialize(const char *filePath) const override;
 
 		const char *getFileType() const override { return "NSD"; }
@@ -82,7 +90,10 @@ class NSDParser : public IAssetParser {
 
 	private:
 		SceneData sd;
-		void extract_entity_names(const uint8_t *data, size_t data_size);
+		const char *last_error = "";
+		void clear();
+		int reject(const char *message);
+		int extract_entity_names(const uint8_t *data, size_t data_size);
 		void extract_sky_model(const uint8_t *data, size_t data_size);
 };
 

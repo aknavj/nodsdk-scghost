@@ -368,17 +368,18 @@ void inspectNSD(IAssetParser *p, InspectorContext &) {
 
 	ImGui::Text("NSD Scene Data");
 	ImGui::Separator();
-	ImGui::Text("Entities: %u  |  Types: %u", scene.entity_count, scene.type_name_count);
+	ImGui::Text("Entities: %u parsed / %u declared  |  Types: %u",
+	            scene.entity_array_count, scene.entity_count, scene.type_name_count);
 	if(scene.has_sky_model) ImGui::Text("Sky Model: %s", scene.sky_model_name);
 
-	if(scene.entity_count > 0 &&
+	if(scene.entity_array_count > 0 &&
 	   ImGui::BeginTable("nsd_ents", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
 		ImGui::TableSetupColumn("Index");
 		ImGui::TableSetupColumn("Type");
 		ImGui::TableSetupColumn("Model");
 		ImGui::TableSetupColumn("Position");
 		ImGui::TableHeadersRow();
-		for(uint32_t i = 0; i < scene.entity_count; ++i) {
+		for(uint32_t i = 0; i < scene.entity_array_count; ++i) {
 			const auto &e = scene.entities[i];
 			ImGui::TableNextRow();
 			ImGui::TableNextColumn(); ImGui::Text("%u", i);

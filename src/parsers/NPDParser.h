@@ -51,6 +51,11 @@ class NPDParser : public IAssetParser {
 			uint8_t *trailer;
 			size_t trailer_size;
 			size_t file_size;
+			struct LinkRecord {
+				uint16_t from, to, cost;
+			};
+			LinkRecord *links; // decoded view; serialize preserves the original trailer
+			size_t link_count;
 		};
 
 		NPDParser() { 
@@ -60,9 +65,13 @@ class NPDParser : public IAssetParser {
 		~NPDParser() override {
 			free(pd.records);
 			free(pd.trailer);
+			free(pd.links);
 		}
 
 		int parse(const char *filePath) override;
+		// Owns decoded records/trailer; parsing again invalidates previous views.
+		int parseBuffer(const uint8_t *data, size_t size);
+		const char *getLastError() const { return last_error; }
 		int serialize(const char *filePath) const override;
 
 		const char *getFileType() const override { return "NPD"; }
@@ -70,6 +79,9 @@ class NPDParser : public IAssetParser {
 
 	private:
 		PlacementData pd;
+		const char *last_error = "";
+		void clear();
+		int reject(const char *message);
 };
 
 #endif // __NPDPARSER_H__

@@ -26,130 +26,89 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 /*
  */
-void NSDParser::extract_entity_names(const uint8_t *data, size_t data_size) {
-
-	uint32_t entCap		  = 512;
-	sd.entities			  = (SceneEntity *)calloc(entCap, sizeof(SceneEntity));
-	sd.entity_array_count = 0;
-	sd.type_name_count	  = 0;
-
-	// scan the entire NSD for tag-validated entity blocks.
-	// every entity block starts with a printable null-terminated string
-	// (the type name), has tag1=1 at +32 and tag2=2 at +68, and
-	// position/rotation at +72/+36 respectively.
-	size_t pos = 0;
-	while(pos + 84 < data_size) {
-		// find a printable null-terminated string (2..64 chars)
-		int slen = 0;
-		while(slen < 64 && pos + (size_t)slen < data_size && data[pos + slen] >= 32 && data[pos + slen] <= 126) slen++;
-		if(slen < 2 || slen >= 64 || pos + (size_t)slen >= data_size || data[pos + slen] != 0) {
-			pos++;
-			continue;
-		}
-
-		size_t T = pos;
-
-		// validate block: tag1=1 at +32, tag2=2 at +68
-		if(T + 84 > data_size) {
-			pos++;
-			continue;
-		}
-		uint32_t tag1, tag2;
-		memcpy(&tag1, data + T + 32, 4);
-		memcpy(&tag2, data + T + 68, 4);
-		if(tag1 != 1 || tag2 != 2) {
-			pos++;
-			continue;
-		}
-
-		// read position from +72 (3 floats)
-		float px, py, pz;
-		memcpy(&px, data + T + 72, 4);
-		memcpy(&py, data + T + 76, 4);
-		memcpy(&pz, data + T + 80, 4);
-
-		if(fabsf(px) > 100000.0f || fabsf(py) > 100000.0f || fabsf(pz) > 100000.0f) {
-			pos++;
-			continue;
-		}
-
-		// grow array if needed
-		if(sd.entity_array_count >= entCap) {
-			entCap *= 2;
-			sd.entities = (SceneEntity *)realloc(sd.entities, entCap * sizeof(SceneEntity));
-		}
-
-		SceneEntity *e = &sd.entities[sd.entity_array_count++];
-		memset(e, 0, sizeof(SceneEntity));
-		memcpy(e->type_name, data + T, (size_t)slen);
-		e->type_name[slen] = '\0';
-		e->block_offset	   = T;
-		e->block_size	   = 0;
-		e->position[0]	   = px;
-		e->position[1]	   = py;
-		e->position[2]	   = pz;
-		memcpy(e->rotation, data + T + 36, 12);
-		e->has_transform = true;
-
-		// scan for tag4 (model name) starting at +140, in 36-byte blocks
-		for(size_t blk = T + 140; blk + 36 <= data_size && blk < T + 140 + 36 * 4; blk += 36) {
-			uint32_t btag;
-			memcpy(&btag, data + blk, 4);
-			if(btag == 4 && blk + 4 + 2 < data_size) {
-				const char *str = (const char *)(data + blk + 4);
-				size_t sl		= strnlen(str, 60);
-				if(sl >= 2 && sl < 60) {
-					bool printable = true;
-					for(size_t c = 0; c < sl; c++) {
-						if(str[c] < 32 || str[c] > 126) {
-							printable = false;
-							break;
-						}
-					}
-					if(printable) {
-						strncpy(e->model_name, str, 63);
-						e->model_name[63] = '\0';
-						e->has_model	  = true;
-					}
-				}
-				break;
-			}
-		}
-
-		// extract script/effect name at +144 (tag 0xa1 at +140)
-		if(T + 204 <= data_size) {
-			uint32_t stag;
-			memcpy(&stag, data + T + 140, 4);
-			if(stag == 0xa1) {
-				const char *sn = (const char *)(data + T + 144);
-				size_t snl	   = strnlen(sn, 60);
-				if(snl > 0 && snl < 60) {
-					bool printable = true;
-					for(size_t c = 0; c < snl; c++) {
-						if(sn[c] < 32 || sn[c] > 126) {
-							printable = false;
-							break;
-						}
-					}
-					if(printable) strncpy(e->script_name, sn, 63);
-				}
-			}
-		}
-
-		// track unique type names
-		bool found = false;
-		for(uint32_t t = 0; t < sd.type_name_count; ++t) {
-			if(strcmp(sd.entity_type_names[t], e->type_name) == 0) {
-				found = true;
-				break;
-			}
-		}
-		if(!found && sd.type_name_count < MAX_TYPE_NAMES) {
-			strcpy(sd.entity_type_names[sd.type_name_count++], e->type_name);
-		}
-
-		pos = T + (size_t)slen + 32;
+namespace {
+bool name32(const uint8_t *data, char *out, bool terminated) {
+	size_t n = 0;
+	for(; n < 32 && data[n]; ++n) {
+		if(data[n] < 32 || data[n] > 126) return false;
+		out[n] = static_cast<char>(data[n]);
 	}
+	out[n] = 0;
+	return !terminated || (n > 0 && n < 32);
+}
+
+bool entityAt(const uint8_t *data, char *type) {
+	if(FileUtils::readUInt32(data, 32) != 1 || FileUtils::readUInt32(data, 68) != 2 ||
+	   !name32(data, type, true)) return false;
+	// Zero padding distinguishes type names from tag-like property-string suffixes.
+	for(size_t i = strlen(type); i < 32; ++i)
+		if(data[i]) return false;
+	return true;
+}
+}
+
+int NSDParser::extract_entity_names(const uint8_t *data, size_t data_size) {
+	uint32_t capacity = 512;
+	sd.entities = static_cast<SceneEntity *>(calloc(capacity, sizeof(SceneEntity)));
+	if(!sd.entities) return reject("out of memory reading NSD entities");
+	for(size_t pos = 92; pos <= data_size - 84; ++pos) {
+		char type[65];
+		if(!entityAt(data + pos, type)) continue;
+		for(size_t j = 0; j < 3; ++j)
+			if(!std::isfinite(FileUtils::readFloat(data, pos + 36 + j * 4)) ||
+			   !std::isfinite(FileUtils::readFloat(data, pos + 72 + j * 4)))
+				return reject("tagged NSD entity has non-finite transform");
+		if(sd.entity_array_count == capacity) {
+			if(capacity > UINT32_MAX / 2 || static_cast<size_t>(capacity) > SIZE_MAX / 2 / sizeof(SceneEntity))
+				return reject("NSD entity array is too large");
+			capacity *= 2;
+			auto *grown = static_cast<SceneEntity *>(realloc(sd.entities, capacity * sizeof(SceneEntity)));
+			if(!grown) return reject("out of memory growing NSD entities");
+			sd.entities = grown;
+		}
+		auto &e = sd.entities[sd.entity_array_count++];
+		memset(&e, 0, sizeof(e));
+		strcpy(e.type_name, type);
+		e.block_offset = pos;
+		e.has_transform = true;
+		for(size_t j = 0; j < 3; ++j) {
+			e.position[j] = FileUtils::readFloat(data, pos + 72 + j * 4);
+			e.rotation[j] = FileUtils::readFloat(data, pos + 36 + j * 4);
+		}
+		bool found = false;
+		for(uint32_t i = 0; i < sd.type_name_count; ++i)
+			if(!strcmp(sd.entity_type_names[i], type)) found = true;
+		if(!found && sd.type_name_count < MAX_TYPE_NAMES)
+			strcpy(sd.entity_type_names[sd.type_name_count++], type);
+		pos += 83;
+	}
+	for(uint32_t i = 0; i < sd.entity_array_count; ++i) {
+		auto &e = sd.entities[i];
+		const size_t end = i + 1 < sd.entity_array_count ? sd.entities[i + 1].block_offset : data_size;
+		const uint8_t *p = data + e.block_offset;
+		e.block_size = end - e.block_offset;
+		if(e.block_size >= 140) {
+			const uint32_t tag = FileUtils::readUInt32(p, 104);
+			if(tag == 3) { e.has_sector = true; e.sector = FileUtils::readUInt32(p, 108); }
+			else if(tag == 15 && !name32(p + 108, e.region_class, true)) e.region_class[0] = 0;
+		}
+		for(size_t slot = 140; slot <= e.block_size && e.block_size - slot >= 36 && slot < 284; slot += 36) {
+			if(FileUtils::readUInt32(p, slot) != 4) continue;
+			e.has_model_override = true;
+			e.model_override_valid = name32(p + slot + 4, e.model_name, false);
+			e.has_model = e.model_override_valid && *e.model_name;
+			break;
+		}
+		if(e.block_size >= 204 && FileUtils::readUInt32(p, 140) == 0xa1) {
+			size_t n = 0;
+			for(; n < 60 && p[144 + n] >= 32 && p[144 + n] <= 126; ++n) {}
+			if(n < 60 && p[144 + n] == 0) {
+				memcpy(e.script_name, p + 144, n);
+				e.script_name[n] = 0;
+			}
+		}
+	}
+	return 1;
 }
 
 // scan the NSD binary for the sky dome model reference.
@@ -209,28 +168,40 @@ void NSDParser::extract_sky_model(const uint8_t *data, size_t data_size) {
 /*
  */
 int NSDParser::parse(const char *filePath) {
-
 	size_t file_size = 0;
-	uint8_t *data	 = FileUtils::readBinaryFile(filePath, &file_size);
-	if(!data || file_size < 8) {
-		free(data);
-		return 0;
-	}
+	uint8_t *data = FileUtils::readBinaryFile(filePath, &file_size);
+	if(!data) return reject("cannot read NSD file");
+	int ok = parseBuffer(data, file_size);
+	free(data);
+	return ok;
+}
 
-	if(data[0] != 'N' || data[1] != 'S' || data[2] != 'D') {
-		free(data);
-		return 0;
-	}
+void NSDParser::clear() {
+	free(sd.entities);
+	free(sd.raw_data);
+	memset(&sd, 0, sizeof(sd));
+}
 
-	sd.file_size	= file_size;
-	sd.magic		= FileUtils::readUInt32(data, 0);
-	sd.entity_count = FileUtils::readUInt32(data, 4);
+int NSDParser::reject(const char *message) {
+	clear();
+	last_error = message;
+	return 0;
+}
 
-	extract_entity_names(data, file_size);
-	extract_sky_model(data, file_size);
-
-	sd.raw_data		 = data;
-	sd.raw_data_size = file_size;
+int NSDParser::parseBuffer(const uint8_t *data, size_t size) {
+	last_error = "";
+	if(!data || size < 92 || memcmp(data, "NSD\x10", 4))
+		return reject("expected NSD header with 92 bytes and magic NSD\\x10");
+	auto *copy = static_cast<uint8_t *>(malloc(size));
+	if(!copy) return reject("out of memory reading NSD source bytes");
+	memcpy(copy, data, size);
+	clear();
+	sd.raw_data = copy;
+	sd.raw_data_size = sd.file_size = size;
+	sd.magic = FileUtils::readUInt32(copy, 0);
+	sd.entity_count = FileUtils::readUInt32(copy, 80);
+	if(!extract_entity_names(copy, size)) return 0;
+	extract_sky_model(copy, size);
 	return 1;
 }
 

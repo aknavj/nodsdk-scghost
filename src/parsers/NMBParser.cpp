@@ -67,7 +67,7 @@ int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, Mo
 	// 32-byte name field at off+5
 	memset(e->name, 0, sizeof(e->name));
 	memcpy(e->name, data + off + 5, 32);
-	e->name[31] = '\0';
+	e->name[32] = '\0';
 
 	// vertex_set_count (1B) at off+37
 	e->vertex_set_count = data[off + 37];
