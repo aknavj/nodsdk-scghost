@@ -3,23 +3,32 @@ Empty container in model-based scenes; read-only brush preview in legacy scenes.
 NODscene preserves original NIL geometry; this is not a BSP or collision compiler.
 */
 
-/*QUAKED nod_scene (0.6 0.6 0.6) (-4 -4 -4) (4 4 4)
+/*QUAKED func_group (0.6 0.7 0.8) ?
+Editable MAP brush group generated from an OBJ fallback at 0.01-unit thickness.
+Geometry can be edited and saved in MAP. Native compilation currently accepts
+only unchanged brush geometry/materials and source metadata.
+*/
+
+/*QUAKED nod_scene (0.6 0.6 0.6) (-0.125 -0.125 -0.125) (0.125 0.125 0.125)
 Immutable source binding. Do not edit, add, or delete.
 "nod_id" - Stable identity.
 "nod_schema" - Sidecar and geometry schema.
 "nod_sources" - Source checksums.
 */
 
-/*QUAKED nod_nil_sector (0.2 0.7 1) (-8 -8 -8) (8 8 8)
+/*QUAKED nod_nil_sector (0.2 0.7 1) (-0.125 -0.125 -0.125) (0.125 0.125 0.125)
 Read-only sector center, flags, and portal count; not a sector volume.
 */
 
-/*QUAKED nod_nsd_entity (1 0.6 0.2) (-8 -8 -8) (8 8 8)
+/*QUAKED nod_nsd_entity (1 0.6 0.2) (-0.125 -0.125 -0.125) (0.125 0.125 0.125)
 Native scene point. Only origin, nod_rotation, and existing nod_sector are
 editable. All identity, type, region, model, and resolution fields are read-only.
-Trigger bounds and scripts remain opaque and preserved in the sidecar.
-The 16-unit box is a selection marker, not native bounds; nod_rotation does
-not visually rotate this placeholder.
+Supported regions use computed inline LOD-0 mesh bounds; original meshes and
+scripts remain immutable in the sidecar. Other entities use a 0.25-unit marker.
+"nod_bounds_status" - Read-only inline-mesh or explicit unavailable status.
+"nod_bounds_min" - Read-only local-space minimum.
+"nod_bounds_max" - Read-only local-space maximum.
+GtkRadiant transforms these bounds by origin and native nod_rotation.
 */
 
 /*QUAKED misc_model (1 0.6 0.2) (-8 -8 -8) (8 8 8)
@@ -36,14 +45,14 @@ Native references, member identity, provenance, checksums, and status are
 read-only. Editing scales, frames, and remaps is not supported by the compiler.
 */
 
-/*QUAKED nod_npd_waypoint (0.2 1 0.4) (-4 -4 -4) (4 4 4)
+/*QUAKED nod_npd_waypoint (0.2 1 0.4) (-0.125 -0.125 -0.125) (0.125 0.125 0.125)
 Waypoint in native navigation space, not NIL/NSD world space.
-The 8-unit box is a selection marker; navigation-to-world mapping is unverified.
+The 0.25-unit box is a selection marker; navigation-to-world mapping is unverified.
 Only origin, nod_flags, nod_color, and nod_extra are editable.
 Do not add/delete nodes. Identity, waypoint ID, and coordinate space are read-only.
 */
 
-/*QUAKED nod_npd_link (0.4 0.7 0.4) (-2 -2 -2) (2 2 2)
+/*QUAKED nod_npd_link (0.4 0.7 0.4) (-0.125 -0.125 -0.125) (0.125 0.125 0.125)
 Native adjacency metadata at the origin, not a rendered edge.
 Only nod_from, nod_to, and nod_cost are editable; endpoints are record indices.
 Do not add/delete links.

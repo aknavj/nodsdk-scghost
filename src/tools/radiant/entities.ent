@@ -1,28 +1,38 @@
 <?xml version="1.0"?>
 <classes>
-  <point name="nod_scene" color="0.6 0.6 0.6" box="-4 -4 -4 4 4 4">
+  <group name="func_group" color="0.6 0.7 0.8">
+Editable MAP brush group generated from an OBJ fallback at 0.01-unit thickness.
+Native compilation accepts only unchanged geometry and metadata. Edited brushes
+can be saved in MAP but cannot yet be compiled back into NIL.
+  </group>
+  <point name="nod_scene" color="0.6 0.6 0.6" box="-0.125 -0.125 -0.125 0.125 0.125 0.125">
 Source binding for NODscene. Do not edit or delete.
     <string key="nod_id" name="Stable identity">Read-only.</string>
     <string key="nod_schema" name="Schema version">Read-only.</string>
     <string key="nod_sources" name="Source checksums">Read-only.</string>
   </point>
-  <point name="nod_nil_sector" color="0.2 0.7 1" box="-8 -8 -8 8 8 8">
+  <point name="nod_nil_sector" color="0.2 0.7 1" box="-0.125 -0.125 -0.125 0.125 0.125 0.125">
 Read-only NIL sector center and metadata. This is not a sector volume.
     <string key="nod_id" name="Stable sector identity">Read-only.</string>
     <string key="nod_flags" name="Sector flags">Read-only.</string>
     <string key="nod_portals" name="Portal count">Read-only; portal connectivity remains in the sidecar.</string>
   </point>
-  <point name="nod_nsd_entity" color="1 0.6 0.2" box="-8 -8 -8 8 8 8">
+  <point name="nod_nsd_entity" color="1 0.6 0.2" box="-0.125 -0.125 -0.125 0.125 0.125 0.125">
 Tagged native NSD entity. origin is world-space XYZ. Only origin, nod_rotation,
 and an existing nod_sector property are editable. Native model references are
-metadata, not Radiant-loadable model files. Trigger volumes/scripts remain opaque.
+metadata, not Radiant-loadable model files. Supported regions use computed inline
+mesh bounds with native rotation; other points use a small selection marker.
+Scripts and the original inline meshes remain preserved, not editable.
     <string key="nod_id" name="Stable source identity">Read-only source byte offset.</string>
     <string key="nod_type" name="Native entity type">Read-only; no Quake gameplay mapping.</string>
     <string key="nod_rotation" name="Native rotation">Three native Euler components, in original order.</string>
     <string key="nod_sector" name="Native sector index">Editable if present; zero-based NIL sector index.</string>
     <string key="nod_model" name="Native NOD/NMB reference">Read-only; use NODscene preview for verified asset lookup.</string>
     <string key="nod_preview_status" name="Preview resolution status">Read-only; unresolved records remain native points.</string>
-    <string key="nod_region_class" name="Native region class">Read-only; region geometry is not decoded.</string>
+    <string key="nod_region_class" name="Native region class">Read-only.</string>
+    <string key="nod_bounds_status" name="Region bounds status">Read-only; inline-mesh or an explicit unavailable status.</string>
+    <string key="nod_bounds_min" name="Local bounds minimum">Read-only computed inline LOD-0 mesh bounds.</string>
+    <string key="nod_bounds_max" name="Local bounds maximum">Read-only; transformed by origin and nod_rotation in GtkRadiant.</string>
   </point>
   <point name="misc_model" color="1 0.6 0.2" box="-8 -8 -8 8 8 8">
 NODscene editor alias for exactly one native NSD entity, not a Quake gameplay
@@ -30,7 +40,8 @@ entity. Editable fields: origin, angles, and existing nod_sector. The model is a
 unanimated native NOD/NMB reference under NOD Authoring, at scale 1. NIL world
 and legacy previews use OBJ. Do not add/delete aliases or edit scales/remaps.
 Exception: nod_id "nil:world" and nod_role "nil_geometry" identify the static
-NIL world preview. ALL its fields, including origin and angles, are read-only.
+legacy NIL world preview. ALL its fields, including origin and angles, are read-only.
+New OBJ fallbacks use editable func_group brushes instead.
     <string key="nod_id" name="Stable source identity">Read-only NSD byte offset or nil:world.</string>
     <string key="nod_role" name="Preview role">Read-only; nil_geometry identifies immutable NIL geometry.</string>
     <string key="nod_type" name="Native entity type">Read-only.</string>
@@ -46,9 +57,12 @@ NIL world preview. ALL its fields, including origin and angles, are read-only.
     <string key="nod_provenance" name="Reference provenance">Read-only NOT property or NSD tag.</string>
     <string key="nod_asset_crc" name="Native asset checksum">Read-only.</string>
     <string key="nod_preview_status" name="Preview resolution status">Read-only.</string>
-    <string key="nod_region_class" name="Native region class">Read-only if present; region bounds remain opaque.</string>
+    <string key="nod_region_class" name="Native region class">Read-only if present.</string>
+    <string key="nod_bounds_status" name="Region bounds status">Read-only if present; model aliases use their rendered mesh bounds.</string>
+    <string key="nod_bounds_min" name="Local region bounds minimum">Read-only if present.</string>
+    <string key="nod_bounds_max" name="Local region bounds maximum">Read-only if present.</string>
   </point>
-  <point name="nod_npd_waypoint" color="0.2 1 0.4" box="-4 -4 -4 4 4 4">
+  <point name="nod_npd_waypoint" color="0.2 1 0.4" box="-0.125 -0.125 -0.125 0.125 0.125 0.125">
 NPD waypoint in native NAVIGATION space, NOT NIL/NSD world space.
 Editable fields: origin, nod_flags, nod_color, nod_extra. Do not add/delete nodes.
     <string key="nod_id" name="Stable record identity">Read-only zero-based record index.</string>
@@ -58,7 +72,7 @@ Editable fields: origin, nod_flags, nod_color, nod_extra. Do not add/delete node
     <string key="nod_color" name="Raw debug color">Unsigned 32-bit packed color, decimal.</string>
     <string key="nod_extra" name="Raw extra fields">Three unsigned 16-bit values.</string>
   </point>
-  <point name="nod_npd_link" color="0.4 0.7 0.4" box="-2 -2 -2 2 2 2">
+  <point name="nod_npd_link" color="0.4 0.7 0.4" box="-0.125 -0.125 -0.125 0.125 0.125 0.125">
 Native NPD adjacency record. These metadata markers are placed at the origin;
 they do not draw graph edges. Do not add/delete link records.
     <string key="nod_id" name="Stable link identity">Read-only adjacency record index.</string>
