@@ -22,6 +22,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "NODParser.h"
+#include <algorithm>
+#include <cmath>
+#include <limits>
 
 /*
  */
@@ -313,6 +316,75 @@ int NODParser::parseOwnedBuffer(uint8_t *data, size_t file_size) {
 
 /*
  */
+bool NODParser::computeBounds(float minimum[3], float maximum[3], std::string &error) const {
+	error.clear();
+	float lower[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+					  std::numeric_limits<float>::max()};
+	float upper[3] = {-lower[0], -lower[1], -lower[2]};
+	bool found = false;
+	for(uint32_t g = 0; g < m.mesh_group_count; ++g) {
+		const auto &group = m.mesh_groups[g];
+		const auto &lod = group.lods[0];
+		if(group.vertex_set_index >= m.vertex_set_count || lod.list_count % 3 ||
+		   lod.list_start > m.index_count || lod.list_count > m.index_count - lod.list_start ||
+		   lod.strip_start > m.index_count || lod.strip_count > m.index_count - lod.strip_start) {
+			error = "Invalid NOD LOD-0 group while computing bounds";
+			return false;
+		}
+		const auto &set = m.vertex_sets[group.vertex_set_index];
+		auto triangle = [&](uint16_t a, uint16_t b, uint16_t c) {
+			if(a == b || b == c || a == c) return true;
+			for(uint16_t index : {a, b, c}) {
+				if(group.base_vertex > set.count || index >= set.count - group.base_vertex) {
+					error = "NOD bounds index outside vertex set";
+					return false;
+				}
+				const size_t offset = set.data_offset + size_t(group.base_vertex + index) * set.base_stride;
+				if(offset > m.vertex_data_size || m.vertex_data_size - offset < 3 * sizeof(float)) {
+					error = "NOD bounds vertex outside buffer";
+					return false;
+				}
+				for(size_t axis = 0; axis < 3; ++axis) {
+					const float value = FileUtils::readFloat(m.vertex_data, offset + axis * sizeof(float));
+					if(!std::isfinite(value)) {
+						error = "Non-finite NOD bounds vertex";
+						return false;
+					}
+					lower[axis] = std::min(lower[axis], value);
+					upper[axis] = std::max(upper[axis], value);
+				}
+				found = true;
+			}
+			return true;
+		};
+		for(uint32_t i = 0; i < lod.list_count; i += 3) {
+			const uint16_t *indices = m.indices + lod.list_start + i;
+			if(!triangle(indices[0], indices[1], indices[2])) return false;
+		}
+		uint16_t previous[2] = {};
+		uint32_t seen = 0;
+		for(uint32_t i = 0; i < lod.strip_count; ++i) {
+			const uint16_t index = m.indices[lod.strip_start + i];
+			if(index == UINT16_MAX) {
+				seen = 0;
+			} else if(seen < 2) {
+				previous[seen++] = index;
+			} else {
+				if(!triangle(previous[0], previous[1], index)) return false;
+				previous[0] = previous[1];
+				previous[1] = index;
+			}
+		}
+	}
+	if(!found) {
+		error = "NOD has no LOD-0 triangles for bounds";
+		return false;
+	}
+	std::copy(lower, lower + 3, minimum);
+	std::copy(upper, upper + 3, maximum);
+	return true;
+}
+
 int NODParser::serialize(const char *filePath) const {
 
 	return FileUtils::writeBinaryFile(filePath, m.raw_data, m.raw_data_size);

@@ -148,6 +148,7 @@ class NODParser : public IAssetParser {
 
 		const char *getFileType() const override { return "NOD"; }
 		const ModelData &getModelData() const { return m; }
+		bool computeBounds(float minimum[3], float maximum[3], std::string &error) const;
 
 	private:
 		ModelData m;

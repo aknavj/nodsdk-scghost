@@ -22,6 +22,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "NSDParser.h"
+#include "NODParser.h"
 #include <cmath>
 
 /*
@@ -107,7 +108,71 @@ int NSDParser::extract_entity_names(const uint8_t *data, size_t data_size) {
 				e.script_name[n] = 0;
 			}
 		}
+		if(*e.region_class && !extract_region_bounds(e, data)) return 0;
 	}
+	return 1;
+}
+
+int NSDParser::extract_region_bounds(SceneEntity &entity, const uint8_t *data) {
+	entity.bounds_status = "unsupported-layout";
+	const size_t start = entity.block_offset;
+	const uint8_t *p = data + start;
+	// A type name is the payload of modifier zero; its count precedes that modifier.
+	if(start < 8 || FileUtils::readUInt32(data, start - 4) != 0) return 1;
+	const uint32_t modifiers = FileUtils::readUInt32(data, start - 8);
+	if(modifiers < 4 || modifiers > 128) return 1;
+	size_t offset = 32;
+	auto consume = [&](size_t count, size_t stride) {
+		if(offset > entity.block_size || count > (entity.block_size - offset) / stride) return false;
+		offset += count * stride;
+		return true;
+	};
+	if(!consume(modifiers - 1, 36)) return 1;
+	if(!consume(1, 4)) return reject("truncated NSD region frame count");
+	const uint32_t frames = FileUtils::readUInt32(p, offset - 4);
+	if(!consume(frames, 28) || !consume(1, 4)) return reject("truncated NSD region frames or parameter count");
+	const uint32_t parameters = FileUtils::readUInt32(p, offset - 4);
+	for(uint32_t i = 0; i < parameters; ++i) {
+		if(!consume(1, 4)) return reject("truncated NSD region parameter type");
+		const uint32_t type = FileUtils::readUInt32(p, offset - 4);
+		if(type == 6) continue;
+		if(type < 1 || type > 11) {
+			entity.bounds_status = "unsupported-parameter-type";
+			return 1;
+		}
+		if(!consume(1, 4)) return reject("truncated NSD region parameter value");
+		if(type == 7 && !consume(FileUtils::readUInt32(p, offset - 4), 1))
+			return reject("truncated NSD region parameter string");
+	}
+	if(!consume(1, 4)) return reject("truncated NSD region inline-model flag");
+	if(!FileUtils::readUInt32(p, offset - 4)) {
+		entity.bounds_status = "no-inline-model";
+		return 1;
+	}
+	const size_t model_offset = offset;
+	if(!consume(1, 92)) return reject("truncated NSD region inline-model header");
+	const uint8_t *header = p + model_offset;
+	if(header[6] > NODParser::MAX_VERTEX_SETS) return reject("invalid NSD region vertex set count");
+	if(!consume(header[4], 32) || !consume(header[5], 64))
+		return reject("truncated NSD region shaders or bones");
+	for(uint8_t i = 0; i < header[6]; ++i) {
+		const uint32_t type = FileUtils::readUInt32(header, 36 + size_t(i) * 8);
+		const uint32_t count = FileUtils::readUInt32(header, 40 + size_t(i) * 8);
+		static const size_t strides[] = {32, 36, 48, 68, 72, 84};
+		if(type > 5 || !consume(count, strides[type])) return reject("invalid NSD region vertex stream");
+	}
+	if(!consume(FileUtils::readUInt32(header, 68), 2) || !consume(header[7], 56))
+		return reject("truncated NSD region indices or groups");
+	NODParser model;
+	std::string error;
+	if(!model.parseBuffer(p + model_offset, offset - model_offset) ||
+	   !model.computeBounds(entity.bounds_min, entity.bounds_max, error)) {
+		fprintf(stderr, "NSDParser: region at byte %zu: %s\n", start,
+				error.empty() ? model.getLastError().c_str() : error.c_str());
+		return reject("invalid NSD region inline geometry");
+	}
+	entity.has_bounds = true;
+	entity.bounds_status = "inline-mesh";
 	return 1;
 }
 

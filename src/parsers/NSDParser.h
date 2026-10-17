@@ -49,6 +49,10 @@ class NSDParser : public IAssetParser {
 			bool has_sector;
 			uint32_t sector;
 			char region_class[33];
+			bool has_bounds;
+			float bounds_min[3]; // local-space AABB of referenced inline LOD-0 vertices
+			float bounds_max[3];
+			const char *bounds_status;
 		};
 
 		struct SceneData {
@@ -94,6 +98,7 @@ class NSDParser : public IAssetParser {
 		void clear();
 		int reject(const char *message);
 		int extract_entity_names(const uint8_t *data, size_t data_size);
+		int extract_region_bounds(SceneEntity &entity, const uint8_t *data);
 		void extract_sky_model(const uint8_t *data, size_t data_size);
 };
 
