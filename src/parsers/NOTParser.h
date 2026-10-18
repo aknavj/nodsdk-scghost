@@ -45,6 +45,7 @@ class NOTParser : public IAssetParser {
 			uint8_t value[PROP_VALUE_SIZE]; // raw value (32 bytes, or less for int)
 			uint32_t value_size; // actual value bytes: 32 (standard), 1 (int)
 			int is_comment; // true if this is a developer comment string
+			size_t value_offset; // absolute source offset of the value payload
 		};
 
 		/*
@@ -59,6 +60,7 @@ class NOTParser : public IAssetParser {
 
 			Property *properties; // parsed properties, or nullptr
 			uint32_t property_count; // actually parsed count
+			bool properties_complete; // every declared property was decoded at full width
 
 			// comment string (if any), heap-allocated
 			char *comment;
@@ -81,6 +83,8 @@ class NOTParser : public IAssetParser {
 		~NOTParser() override;
 
 		int parse(const char *filePath) override;
+		int parseBuffer(const uint8_t *data, size_t size);
+		const char *getLastError() const { return last_error; }
 		int serialize(const char *filePath) const override;
 		const char *getFileType() const override { return "NOT"; }
 
@@ -96,6 +100,9 @@ class NOTParser : public IAssetParser {
 		int parse_properties(Template &tmpl, const uint8_t *propData, size_t propDataSize);
 
 		TemplateDB m;
+		const char *last_error = "";
+		void clear();
+		int reject(const char *message);
 };
 
 #endif // __NOTPARSER_H__

@@ -29,7 +29,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 /*
  */
 NOTParser::~NOTParser() {
+	clear();
+}
 
+void NOTParser::clear() {
 	if(m.templates) {
 		for(uint32_t i = 0; i < m.num_templates; ++i) {
 			if(m.templates[i].properties) {
@@ -48,6 +51,7 @@ NOTParser::~NOTParser() {
 		free(m.raw_data);
 		m.raw_data = nullptr;
 	}
+	memset(&m, 0, sizeof(m));
 }
 
 /*
@@ -76,56 +80,43 @@ namespace {
 /*
  */
 int NOTParser::parse(const char *filePath) {
+	size_t size = 0;
+	uint8_t *data = FileUtils::readBinaryFile(filePath, &size);
+	if(!data) return reject("cannot read NOT file");
+	const int result = parseBuffer(data, size);
+	free(data);
+	return result;
+}
 
-	FILE *fp = fopen(filePath, "rb");
-	if(!fp) return 0;
+int NOTParser::reject(const char *message) {
+	clear();
+	last_error = message;
+	return 0;
+}
 
-	fseek(fp, 0, SEEK_END);
-	long fsize = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-
-	if(fsize < 12) {
-		fclose(fp);
-		return 0;
+int NOTParser::parseBuffer(const uint8_t *data, size_t size) {
+	last_error = "";
+	if(!data || size < 12 || ReadU32(data) != MAGIC)
+		return reject("expected NOT header with magic NOT\\x10");
+	const uint32_t version = ReadU32(data + 4);
+	const uint32_t count = ReadU32(data + 8);
+	if(version != 1) return reject("unsupported NOT version");
+	if(count == 0 || count > MAX_TEMPLATES || count > (size - 12) / 36)
+		return reject("invalid or truncated NOT table of contents");
+	auto *copy = static_cast<uint8_t *>(malloc(size));
+	if(!copy) return reject("out of memory reading NOT");
+	memcpy(copy, data, size);
+	clear();
+	m.raw_data = copy;
+	m.raw_data_size = m.file_size = size;
+	m.version = version;
+	m.num_templates = count;
+	m.templates = static_cast<Template *>(calloc(count, sizeof(Template)));
+	if(!m.templates) return reject("out of memory reading NOT templates");
+	if(!parse_toc(copy, size)) return reject("invalid NOT template offsets");
+	for(uint32_t i = 0; i < count; ++i) {
+		if(!parse_template_data(i, copy, size)) return reject("truncated NOT template header");
 	}
-
-	m.raw_data = (uint8_t *)malloc(fsize);
-	if(!m.raw_data) {
-		fclose(fp);
-		return 0;
-	}
-	if((long)fread(m.raw_data, 1, fsize, fp) != fsize) {
-		fclose(fp);
-		return 0;
-	}
-	fclose(fp);
-	m.raw_data_size = (size_t)fsize;
-	m.file_size		= (size_t)fsize;
-
-	const uint8_t *data = m.raw_data;
-
-	uint32_t magic = ReadU32(data);
-	if(magic != MAGIC) return 0;
-
-	m.version		= ReadU32(data + 4);
-	m.num_templates = ReadU32(data + 8);
-
-	if(m.version != 1) return 0;
-	if(m.num_templates == 0 || m.num_templates > MAX_TEMPLATES) return 0;
-
-	size_t tocEnd = 12 + (size_t)m.num_templates * 36;
-	if(tocEnd > (size_t)fsize) return 0;
-
-	m.templates = (Template *)calloc(m.num_templates, sizeof(Template));
-	if(!m.templates) return 0;
-
-	if(!parse_toc(data, (size_t)fsize)) return 0;
-
-	// parse each template's data
-	for(uint32_t i = 0; i < m.num_templates; ++i) {
-		if(!parse_template_data(i, data, (size_t)fsize)) return 0;
-	}
-
 	return 1;
 }
 
@@ -145,7 +136,9 @@ int NOTParser::parse_toc(const uint8_t *data, size_t size) {
 
 		m.templates[i].data_offset = ReadU32(entry + 32);
 
-		if(m.templates[i].data_offset >= size) return 0;
+		if(m.templates[i].data_offset < 12 + size_t(m.num_templates) * 36 ||
+		   m.templates[i].data_offset >= size ||
+		   (i && m.templates[i].data_offset <= m.templates[i - 1].data_offset)) return 0;
 	}
 	return 1;
 }
@@ -157,15 +150,15 @@ int NOTParser::parse_template_data(uint32_t index, const uint8_t *data, size_t s
 	Template &tmpl = m.templates[index];
 	uint32_t start = tmpl.data_offset;
 
-	uint32_t end;
+	size_t end;
 	if(index + 1 < m.num_templates) {
 		end = m.templates[index + 1].data_offset;
 	} else {
-		end = (uint32_t)size;
+		end = size;
 	}
 
-	if(start + 40 > end) return 0;
-	tmpl.data_size = end - start;
+	if(end - start < 40 || end - start > UINT32_MAX) return 0;
+	tmpl.data_size = static_cast<uint32_t>(end - start);
 
 	const uint8_t *tdata = data + start;
 
@@ -179,9 +172,10 @@ int NOTParser::parse_template_data(uint32_t index, const uint8_t *data, size_t s
 	}
 
 	size_t propDataSize = tmpl.data_size - 40;
+	if(tmpl.num_properties == 0) tmpl.properties_complete = true;
 	if(tmpl.num_properties > 0 && propDataSize > 0) {
 		if(!parse_properties(tmpl, tdata + 40, propDataSize)) {
-			// non-fatal: store what we could parse
+			return 0;
 		}
 	}
 
@@ -192,19 +186,17 @@ int NOTParser::parse_template_data(uint32_t index, const uint8_t *data, size_t s
  */
 int NOTParser::parse_properties(Template &tmpl, const uint8_t *propData, size_t propDataSize) {
 
-	if(tmpl.num_properties > MAX_PROPERTIES) {
-		tmpl.num_properties = MAX_PROPERTIES; // clamp
-	}
-
-	tmpl.properties = (Property *)calloc(tmpl.num_properties, sizeof(Property));
+	const uint32_t limit = tmpl.num_properties < MAX_PROPERTIES ? tmpl.num_properties : MAX_PROPERTIES;
+	tmpl.properties = (Property *)calloc(limit, sizeof(Property));
 	if(!tmpl.properties) return 0;
 
 	size_t pos		= 0;
 	uint32_t parsed = 0;
 
-	for(uint32_t p = 0; p < tmpl.num_properties && pos + 4 <= propDataSize; ++p) {
+	for(uint32_t p = 0; p < limit && pos + 4 <= propDataSize; ++p) {
 		Property &prop = tmpl.properties[p];
 		uint32_t val   = ReadU32(propData + pos);
+		prop.value_offset = static_cast<size_t>(propData - m.raw_data) + pos + 4;
 
 		// boolean property (prop_id = 1)
 		if(val == PROP_BOOL_ID && pos + 5 <= propDataSize) {
@@ -281,6 +273,9 @@ int NOTParser::parse_properties(Template &tmpl, const uint8_t *propData, size_t 
 	}
 
 	tmpl.property_count = parsed;
+	tmpl.properties_complete = parsed == tmpl.num_properties &&
+		(parsed == 0 || tmpl.properties[parsed - 1].is_comment ||
+		 tmpl.properties[parsed - 1].value_size == (tmpl.properties[parsed - 1].prop_id == PROP_BOOL_ID ? 1u : 32u));
 	return 1;
 }
 
