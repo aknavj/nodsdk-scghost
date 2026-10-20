@@ -34,6 +34,8 @@ NOTParser::~NOTParser() {
 	clear();
 }
 
+/*
+ */
 void NOTParser::clear() {
 	if(m.templates) {
 		for(uint32_t i = 0; i < m.num_templates; ++i) {
@@ -86,12 +88,16 @@ int NOTParser::parse(const char *filePath) {
 	return result;
 }
 
+/*
+ */
 int NOTParser::reject(const char *message) {
 	clear();
 	last_error = message;
 	return 0;
 }
 
+/*
+ */
 int NOTParser::parseBuffer(const uint8_t *data, size_t size) {
 	last_error = "";
 	if(!data || size < 12 || ReadU32(data) != MAGIC)
@@ -236,6 +242,8 @@ uint32_t NOTParser::countChildren(const char *parentName) const {
 	return count;
 }
 
+/*
+ */
 NOTParser::ResolveStatus NOTParser::resolveModifiers(const char *name, std::vector<ResolvedProperty> &out,
 													std::string &error, const TemplateLookup &lookup) const {
 	const auto *entry = lookup ? lookup(name) : findTemplate(name);
@@ -247,12 +255,16 @@ NOTParser::ResolveStatus NOTParser::resolveModifiers(const char *name, std::vect
 	return resolveModifierList(entry->properties, entry->property_count, entry, out, error, lookup);
 }
 
+/*
+ */
 NOTParser::ResolveStatus NOTParser::resolveModifiers(const Property *properties, size_t count,
 													std::vector<ResolvedProperty> &out, std::string &error,
 													const TemplateLookup &lookup) const {
 	return resolveModifierList(properties, count, nullptr, out, error, lookup);
 }
 
+/*
+ */
 NOTParser::ResolveStatus NOTParser::resolveModifierList(const Property *properties, size_t count, const Template *owner,
 													 std::vector<ResolvedProperty> &out, std::string &error,
 													 const TemplateLookup &lookup) const {

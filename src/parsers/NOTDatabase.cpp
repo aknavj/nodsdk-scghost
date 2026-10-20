@@ -1,3 +1,26 @@
+/*
+===========================================================================
+Copyright (C) 2002 - 2005, Nihilistic Software, Inc.
+Copyright (C) 2002 - 2014, Blizzard Entertainment, Inc.
+Copyright (C) 2024 - 2026, OpenNod SDK & StaRev contributors
+
+StaRev - Starcraft Ghost reversed
+This file is part of the StaRev source code.
+
+StaRev is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License version 3
+as published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <http://www.gnu.org/licenses/>.
+===========================================================================
+*/
+
 #include "NOTDatabase.h"
 #include <algorithm>
 #include <fstream>
@@ -5,8 +28,12 @@
 #include <set>
 #include <cmath>
 
+/*
+ */
 namespace {
 
+/*
+ */
 std::string lower(std::string value) {
 	for(auto &c : value) if(c >= 'A' && c <= 'Z') c += 'a' - 'A';
 	return value;
@@ -14,6 +41,8 @@ std::string lower(std::string value) {
 
 } // namespace
 
+/*
+ */
 bool NOTDatabase::archiveName(std::string value, std::string &name, std::string &error) {
 	error.clear();
 	std::replace(value.begin(), value.end(), '\\', '/');
@@ -40,8 +69,12 @@ bool NOTDatabase::archiveName(std::string value, std::string &name, std::string 
 	return true;
 }
 
+/*
+ */
 namespace {
 
+/*
+ */
 bool read_archive(const std::filesystem::path &root, const std::string &name,
 				  std::vector<uint8_t> &bytes, std::string &error, bool &missing, std::filesystem::path *resolved_path) {
 	missing = false;
@@ -86,6 +119,8 @@ bool read_archive(const std::filesystem::path &root, const std::string &name,
 
 } // namespace
 
+/*
+ */
 bool NOTDatabase::readArchive(const std::filesystem::path &root, const std::string &name, Snapshot &out,
 							  std::string &error, const std::filesystem::path &fallback_root,
 							  std::filesystem::path *resolved_path) {
@@ -104,6 +139,8 @@ bool NOTDatabase::readArchive(const std::filesystem::path &root, const std::stri
 	return true;
 }
 
+/*
+ */
 bool NOTDatabase::load(const std::filesystem::path &game_root, const std::vector<std::string> &scene_archives,
 					   std::string &error, const std::filesystem::path &fallback_root) {
 	error.clear();
@@ -123,6 +160,8 @@ bool NOTDatabase::load(const std::filesystem::path &game_root, const std::vector
 	return loadBuffers(snapshots, error);
 }
 
+/*
+ */
 bool NOTDatabase::loadBuffers(const std::vector<Snapshot> &archives, std::string &error,
 							 const std::vector<std::string> &required) {
 	error.clear();
@@ -160,23 +199,31 @@ bool NOTDatabase::loadBuffers(const std::vector<Snapshot> &archives, std::string
 	return true;
 }
 
+/*
+ */
 const NOTParser::Template *NOTDatabase::findTemplate(const char *name) const {
 	if(!name) return nullptr;
 	const auto found = templates_.find(lower(name));
 	return found == templates_.end() ? nullptr : found->second;
 }
 
+/*
+ */
 const NOTDatabase::Snapshot *NOTDatabase::source(const NOTParser::Template *owner) const {
 	const auto found = sources_.find(owner);
 	return found == sources_.end() ? nullptr : &snapshots_[found->second];
 }
 
+/*
+ */
 NOTParser::ResolveStatus NOTDatabase::resolveModifiers(const char *name,
 		std::vector<NOTParser::ResolvedProperty> &out, std::string &error) const {
 	NOTParser resolver;
 	return resolver.resolveModifiers(name, out, error, [this](const char *reference) { return findTemplate(reference); });
 }
 
+/*
+ */
 NOTParser::ResolveStatus NOTDatabase::resolveModifiers(const NODModifier *properties, size_t count,
 		std::vector<NOTParser::ResolvedProperty> &out, std::string &error) const {
 	NOTParser resolver;
@@ -184,6 +231,8 @@ NOTParser::ResolveStatus NOTDatabase::resolveModifiers(const NODModifier *proper
 		[this](const char *reference) { return findTemplate(reference); });
 }
 
+/*
+ */
 bool NOTDatabase::modelPreview(const std::vector<NOTParser::ResolvedProperty> &properties,
 							  ModelPreview &out, std::string &error) {
 	out = {};

@@ -1,5 +1,30 @@
+/*
+===========================================================================
+Copyright (C) 2002 - 2005, Nihilistic Software, Inc.
+Copyright (C) 2002 - 2014, Blizzard Entertainment, Inc.
+Copyright (C) 2024 - 2026, OpenNod SDK & StaRev contributors
+
+StaRev - Starcraft Ghost reversed
+This file is part of the StaRev source code.
+
+StaRev is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License version 3
+as published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <http://www.gnu.org/licenses/>.
+===========================================================================
+*/
+
 #include "NODProperties.h"
 
+/*
+ */
 const NODPropertyInfo *nodPropertyInfo(uint32_t id) {
 	// Star_d memory export: records begin at 0xA05250, dispatch words at 0xA05270.
 	static const NODPropertyInfo properties[] = {
@@ -64,6 +89,8 @@ const NODPropertyInfo *nodPropertyInfo(uint32_t id) {
 	return id < 177 ? &properties[id] : nullptr;
 }
 
+/*
+ */
 bool nodPropertyMapEditable(uint32_t id, bool preview) {
 	const auto *info = nodPropertyInfo(id);
 	if(!info || id <= 3 || id == 20 ||
@@ -72,6 +99,8 @@ bool nodPropertyMapEditable(uint32_t id, bool preview) {
 	return !preview || (id != 4 && id != 12 && id != 15 && id != 143 && id != 175);
 }
 
+/*
+ */
 bool nodModifierString(const NODModifier &modifier, std::string &value) {
 	value.clear();
 	if(modifier.value_size != sizeof(modifier.value)) return false;
