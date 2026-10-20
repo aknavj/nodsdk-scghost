@@ -14,14 +14,14 @@ set(PARSER_SOURCES
     NPDParser.cpp
     NSAParser.cpp
     NSDParser.cpp
-    NSDEntityResolver.cpp
-    NSDEntityType.cpp
+    NODProperties.cpp
     XPRParser.cpp
     NLTParser.cpp
     TGAParser.cpp
     NOCParser.cpp
     NLSParser.cpp
     NOTParser.cpp
+    NOTDatabase.cpp
     NFXParser.cpp
     NUIParser.cpp
     NAKParser.cpp
