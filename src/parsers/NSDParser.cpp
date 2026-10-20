@@ -52,7 +52,7 @@ int NSDParser::extract_entity_names(const uint8_t *data, size_t data_size) {
 	uint32_t capacity = 512;
 	sd.entities = static_cast<SceneEntity *>(calloc(capacity, sizeof(SceneEntity)));
 	if(!sd.entities) return reject("out of memory reading NSD entities");
-	for(size_t pos = 92; pos <= data_size - 84; ++pos) {
+	for(size_t pos = sd.object_data_offset + 8; pos <= data_size - 84; ++pos) {
 		char type[65];
 		if(!entityAt(data + pos, type)) continue;
 		for(size_t j = 0; j < 3; ++j)
@@ -189,6 +189,10 @@ void NSDParser::extract_sky_model(const uint8_t *data, size_t data_size) {
 	sd.sky_model_name[0] = '\0';
 
 	for(size_t pos = 0; pos + 36 < data_size; pos++) {
+		if(pos >= 80 && pos < sd.object_data_offset) {
+			pos = sd.object_data_offset - 1;
+			continue;
+		}
 		// look for a printable string starting here
 		int slen = 0;
 		while(slen < 60 && pos + (size_t)slen < data_size && data[pos + slen] >= 32 && data[pos + slen] <= 126) slen++;
@@ -225,7 +229,7 @@ void NSDParser::extract_sky_model(const uint8_t *data, size_t data_size) {
 		strncpy(sd.sky_model_name, str, 63);
 		sd.sky_model_name[63] = '\0';
 		sd.has_sky_model	  = true;
-		printf("[NSD] Sky model: %s\n", sd.sky_model_name);
+		fprintf(stderr, "[NSD] Sky model: %s\n", sd.sky_model_name);
 		return;
 	}
 }
@@ -242,6 +246,7 @@ int NSDParser::parse(const char *filePath) {
 }
 
 void NSDParser::clear() {
+	template_files.clear();
 	free(sd.entities);
 	free(sd.raw_data);
 	memset(&sd, 0, sizeof(sd));
@@ -264,7 +269,19 @@ int NSDParser::parseBuffer(const uint8_t *data, size_t size) {
 	sd.raw_data = copy;
 	sd.raw_data_size = sd.file_size = size;
 	sd.magic = FileUtils::readUInt32(copy, 0);
-	sd.entity_count = FileUtils::readUInt32(copy, 80);
+	sd.version = FileUtils::readUInt32(copy, 4);
+	const uint32_t archive_count = FileUtils::readUInt32(copy, 76);
+	if(archive_count > MAX_TEMPLATE_FILES || archive_count > (size - 84) / 32)
+		return reject("invalid or truncated NSD template archive list");
+	for(uint32_t i = 0; i < archive_count; ++i) {
+		char name[33];
+		if(!name32(copy + 80 + size_t(i) * 32, name, true))
+			return reject("invalid NSD template archive name");
+		template_files.emplace_back(name);
+	}
+	const size_t count_offset = 80 + size_t(archive_count) * 32;
+	sd.entity_count = FileUtils::readUInt32(copy, count_offset);
+	sd.object_data_offset = count_offset + 4;
 	if(!extract_entity_names(copy, size)) return 0;
 	extract_sky_model(copy, size);
 	return 1;
@@ -275,4 +292,28 @@ int NSDParser::parseBuffer(const uint8_t *data, size_t size) {
 int NSDParser::serialize(const char *filePath) const {
 
 	return FileUtils::writeBinaryFile(filePath, sd.raw_data, sd.raw_data_size);
+}
+
+bool NSDParser::getModifiers(const SceneEntity &entity, std::vector<NODModifier> &out) const {
+	return readModifiers(sd.raw_data, sd.raw_data_size, entity, out);
+}
+
+bool NSDParser::readModifiers(const uint8_t *data, size_t size, const SceneEntity &entity,
+							 std::vector<NODModifier> &out) {
+	out.clear();
+	const auto offset = entity.block_offset;
+	if(!data || offset < 8 || offset > size || entity.block_size > size - offset) return false;
+	if(FileUtils::readUInt32(data, offset - 4) != 0) return false;
+	const auto count = FileUtils::readUInt32(data, offset - 8);
+	if(count < 3 || count > 128 || size_t(count) * 36 > entity.block_size + 4) return false;
+	for(uint32_t i = 0; i < count; ++i) {
+		const size_t start = offset - 4 + size_t(i) * 36;
+		NODModifier property{};
+		property.prop_id = FileUtils::readUInt32(data, start);
+		property.value_size = 32;
+		property.value_offset = start + 4;
+		memcpy(property.value, data + start + 4, 32);
+		out.push_back(property);
+	}
+	return true;
 }

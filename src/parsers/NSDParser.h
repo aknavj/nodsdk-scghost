@@ -25,6 +25,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define __NSDPARSER_H__
 
 #include "AssetParser.h"
+#include "NODProperties.h"
+#include <vector>
+#include <string>
 
 /*
  */
@@ -33,6 +36,7 @@ class NSDParser : public IAssetParser {
 	public:
 		static const uint32_t MAX_ENTITIES	 = 1024;
 		static const uint32_t MAX_TYPE_NAMES = 128;
+		static const uint32_t MAX_TEMPLATE_FILES = 9;
 
 		struct SceneEntity {
 			char type_name[65];
@@ -57,7 +61,9 @@ class NSDParser : public IAssetParser {
 
 		struct SceneData {
 			uint32_t magic;
-			uint32_t entity_count; // declared count at header offset 80
+			uint32_t version;
+			uint32_t entity_count;
+			size_t object_data_offset; // immediately after the declared object count
 
 			SceneEntity *entities;
 			uint32_t entity_array_count;
@@ -91,9 +97,14 @@ class NSDParser : public IAssetParser {
 
 		const char *getFileType() const override { return "NSD"; }
 		const SceneData &getSceneData() const { return sd; }
+		const std::vector<std::string> &getTemplateFiles() const { return template_files; }
+		bool getModifiers(const SceneEntity &entity, std::vector<NODModifier> &out) const;
+		static bool readModifiers(const uint8_t *data, size_t size, const SceneEntity &entity,
+								  std::vector<NODModifier> &out);
 
 	private:
 		SceneData sd;
+		std::vector<std::string> template_files;
 		const char *last_error = "";
 		void clear();
 		int reject(const char *message);
