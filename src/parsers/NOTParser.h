@@ -25,6 +25,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define __NOTPARSER_H__
 
 #include "AssetParser.h"
+#include "NODProperties.h"
+#include <string>
+#include <vector>
+#include <functional>
 
 /*
  */
@@ -36,25 +40,17 @@ class NOTParser : public IAssetParser {
 		static const uint32_t MAX_TEMPLATES	  = 2048;
 		static const uint32_t MAX_PROPERTIES  = 128;
 		static const uint32_t PROP_VALUE_SIZE = 32;
-		static const uint32_t PROP_BOOL_ID	  = 1;
 
 		/*
 		 */
-		struct Property {
-			uint32_t prop_id;
-			uint8_t value[PROP_VALUE_SIZE]; // raw value (32 bytes, or less for int)
-			uint32_t value_size; // actual value bytes: 32 (standard), 1 (int)
-			int is_comment; // true if this is a developer comment string
-			size_t value_offset; // absolute source offset of the value payload
-		};
+		using Property = NODModifier;
 
 		/*
 		 */
 		struct Template {
 			char name[33]; // from TOC, null-terminated
-			char parent[33]; // parent template name
+			char parent[33]; // first basedon modifier, for hierarchy display only
 			uint32_t num_properties;
-			uint32_t flags; // 47 = root/engine-class, 0 = child
 			uint32_t data_offset; // absolute file offset
 			uint32_t data_size; // total bytes for this template's data
 
@@ -62,10 +58,16 @@ class NOTParser : public IAssetParser {
 			uint32_t property_count; // actually parsed count
 			bool properties_complete; // every declared property was decoded at full width
 
-			// comment string (if any), heap-allocated
-			char *comment;
-			uint32_t comment_len;
+			size_t extra_offset;
+			uint32_t extra_size; // editor-only data, not a runtime modifier
+			size_t trailing_size; // bytes not consumed by the engine loader
 		};
+		struct ResolvedProperty {
+			const Property *property;
+			const Template *owner; // nullptr for a modifier from the supplied placement array
+		};
+		enum class ResolveStatus { ok, missing_template, cycle, too_many, invalid_modifiers };
+		using TemplateLookup = std::function<const Template *(const char *)>;
 
 		/*
 		 */
@@ -90,11 +92,19 @@ class NOTParser : public IAssetParser {
 
 		const TemplateDB &getTemplateDB() const { return m; }
 		const Template *findTemplate(const char *name) const;
+		ResolveStatus resolveModifiers(const char *name, std::vector<ResolvedProperty> &out, std::string &error,
+									  const TemplateLookup &lookup = {}) const;
+		ResolveStatus resolveModifiers(const Property *properties, size_t count,
+									  std::vector<ResolvedProperty> &out, std::string &error,
+									  const TemplateLookup &lookup = {}) const;
 
 		// count how many templates inherit from a given parent
 		uint32_t countChildren(const char *parentName) const;
 
 	private:
+		ResolveStatus resolveModifierList(const Property *properties, size_t count, const Template *owner,
+										 std::vector<ResolvedProperty> &out, std::string &error,
+										 const TemplateLookup &lookup) const;
 		int parse_toc(const uint8_t *data, size_t size);
 		int parse_template_data(uint32_t index, const uint8_t *data, size_t size);
 		int parse_properties(Template &tmpl, const uint8_t *propData, size_t propDataSize);

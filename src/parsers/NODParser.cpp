@@ -51,7 +51,7 @@ namespace {
 			case 5:
 				return 84; // stream0: type2(48) + stream1: TBN(36)
 			default:
-				printf("[NOD] Warning: unknown vertex type %u, assuming stride 32\n", type);
+				fprintf(stderr, "[NOD] Warning: unknown vertex type %u, assuming stride 32\n", type);
 				return 32;
 		}
 	}
@@ -301,12 +301,12 @@ int NODParser::parseOwnedBuffer(uint8_t *data, size_t file_size) {
 	}
 
 	// print summary
-	printf("[NOD] buffer: flags=0x%X, %u shaders, %u bones, %u vertex sets", m.header.flags, m.shader_count,
+	fprintf(stderr, "[NOD] buffer: flags=0x%X, %u shaders, %u bones, %u vertex sets", m.header.flags, m.shader_count,
 		   m.bone_count, m.vertex_set_count);
 	for(uint32_t i = 0; i < m.vertex_set_count; ++i)
-		printf(" [S%u: type%u %u verts stride %u]", i, m.vertex_sets[i].type, m.vertex_sets[i].count,
+		fprintf(stderr, " [S%u: type%u %u verts stride %u]", i, m.vertex_sets[i].type, m.vertex_sets[i].count,
 			   m.vertex_sets[i].stride);
-	printf(", %u indices, %u groups, %u markers\n", m.index_count, m.mesh_group_count, m.marker_count);
+	fprintf(stderr, ", %u indices, %u groups, %u markers\n", m.index_count, m.mesh_group_count, m.marker_count);
 
 	// keep raw for serialization
 	m.raw_data		= data;
