@@ -1,12 +1,11 @@
 /*QUAKED worldspawn (0.5 0.5 0.5) ?
-Empty container in model-based scenes; read-only brush preview in legacy scenes.
-NODscene preserves original NIL geometry; this is not a BSP or collision compiler.
+Model scenes: empty container. Legacy scenes: read-only brush preview.
+Native geometry/collision compilation unsupported.
 */
 
 /*QUAKED func_group (0.6 0.7 0.8) ?
-Editable MAP brush group generated from an OBJ fallback at 0.01-unit thickness.
-Geometry can be edited and saved in MAP. Native compilation currently accepts
-only unchanged brush geometry/materials and source metadata.
+OBJ brush preview (0.01-unit depth). MAP edits save normally.
+Native compilation requires unchanged geometry/materials and source metadata.
 */
 
 /*QUAKED nod_scene (0.6 0.6 0.6) (-0.125 -0.125 -0.125) (0.125 0.125 0.125)
@@ -21,39 +20,32 @@ Read-only sector center, flags, and portal count; not a sector volume.
 */
 
 /*QUAKED nod_nsd_entity (1 0.6 0.2) (-0.125 -0.125 -0.125) (0.125 0.125 0.125)
-Native scene point. Only origin, nod_rotation, and existing nod_sector are
-editable. All identity, type, region, model, and resolution fields are read-only.
-Supported regions use computed inline LOD-0 mesh bounds; original meshes and
-scripts remain immutable in the sidecar. Other entities use a 0.25-unit marker.
+Legacy NSD fallback. Edit origin, nod_rotation and existing nod_sector.
+Schema 14/15 also allows existing local nod_prop_ID; see nod_types.def.
+Inherited values: NOTEditor. Raw/identity/bounds/preview metadata: read-only.
+No modifier insertion. Regions use transformed LOD-0 mesh bounds; others: 0.25-unit markers.
 "nod_bounds_status" - Read-only inline-mesh or explicit unavailable status.
 "nod_bounds_min" - Read-only local-space minimum.
 "nod_bounds_max" - Read-only local-space maximum.
-GtkRadiant transforms these bounds by origin and native nod_rotation.
 */
 
 /*QUAKED misc_model (1 0.6 0.2) (-8 -8 -8) (8 8 8)
-NODscene editor alias for one native entity; not a Quake gameplay entity.
-Only origin, angles, and existing nod_sector are editable. Do not add/delete.
-Exception: nod_id "nil:world" and nod_role "nil_geometry" identify the static
-NIL world preview. ALL its fields, including origin and angles, are read-only.
+Native entity preview; edit origin, angles and existing nod_sector only. No add/delete.
+nil:world (nod_role nil_geometry): all fields read-only.
 "angles" - GtkRadiant rotation, converted back to native orientation.
 "nod_rotation" - Read-only original native rotation; edit angles instead.
-"model" - Read-only native NOD/NMB path; NIL world and legacy previews use OBJ.
-"_frame" - Read-only zero-based NMB member index; NOD and NIL world use 0.
-Native previews use NOD Authoring materials and preserve scale 1.
-Native references, member identity, provenance, checksums, and status are
-read-only. Editing scales, frames, and remaps is not supported by the compiler.
+"model" - Read-only NOD/NMB path; NIL/legacy previews use OBJ.
+"_frame" - Read-only NMB member index (zero-based); NOD/NIL use 0.
+Native units (scale 1). No scale/frame/remap edits; metadata is read-only.
 */
 
 /*QUAKED nod_npd_waypoint (0.2 1 0.4) (-0.125 -0.125 -0.125) (0.125 0.125 0.125)
-Waypoint in native navigation space, not NIL/NSD world space.
-The 0.25-unit box is a selection marker; navigation-to-world mapping is unverified.
+Navigation-space waypoint; world-space mapping unverified.
 Only origin, nod_flags, nod_color, and nod_extra are editable.
-Do not add/delete nodes. Identity, waypoint ID, and coordinate space are read-only.
+No add/delete; identity and coordinate space are read-only.
 */
 
 /*QUAKED nod_npd_link (0.4 0.7 0.4) (-0.125 -0.125 -0.125) (0.125 0.125 0.125)
-Native adjacency metadata at the origin, not a rendered edge.
-Only nod_from, nod_to, and nod_cost are editable; endpoints are record indices.
-Do not add/delete links.
+Adjacency metadata at origin; no rendered edge.
+Edit nod_from, nod_to and nod_cost only; endpoints are record indices. No add/delete.
 */
