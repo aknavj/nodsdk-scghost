@@ -368,6 +368,8 @@ void inspectNSD(IAssetParser *p, InspectorContext &) {
 
 	ImGui::Text("NSD Scene Data");
 	ImGui::Separator();
+	ImGui::Text("Version: %u | Additional NOT archives: %zu", scene.version, nsd->getTemplateFiles().size());
+	for(const auto &archive : nsd->getTemplateFiles()) ImGui::BulletText("%s", archive.c_str());
 	ImGui::Text("Entities: %u parsed / %u declared  |  Types: %u",
 	            scene.entity_array_count, scene.entity_count, scene.type_name_count);
 	if(scene.has_sky_model) ImGui::Text("Sky Model: %s", scene.sky_model_name);
@@ -412,7 +414,7 @@ void inspectNOT(IAssetParser *p, InspectorContext &) {
 		ImGui::TableSetupColumn("Name");
 		ImGui::TableSetupColumn("Parent");
 		ImGui::TableSetupColumn("Properties");
-		ImGui::TableSetupColumn("Flags");
+		ImGui::TableSetupColumn("Editor data bytes");
 		ImGui::TableHeadersRow();
 		for(uint32_t i = 0; i < db.num_templates; ++i) {
 			const auto &t = db.templates[i];
@@ -420,7 +422,7 @@ void inspectNOT(IAssetParser *p, InspectorContext &) {
 			ImGui::TableNextColumn(); ImGui::Text("%s", t.name);
 			ImGui::TableNextColumn(); ImGui::Text("%s", t.parent[0] ? t.parent : "—");
 			ImGui::TableNextColumn(); ImGui::Text("%u", t.property_count);
-			ImGui::TableNextColumn(); ImGui::Text("%u", t.flags);
+			ImGui::TableNextColumn(); ImGui::Text("%u", t.extra_size);
 		}
 		ImGui::EndTable();
 	}
