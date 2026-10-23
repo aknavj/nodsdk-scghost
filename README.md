@@ -15,7 +15,7 @@ An ongoing reverse-engineering effort focused on Nihilistic Software's NOD engin
 |---|---|
 | `src/parsers/` | C++17 static library — parsers for all major NOD asset formats |
 | `src/viewer/` | OpenGL asset browser with ImGui UI |
-| `src/tools/` | NILtoMAP, source-preserving NODscene bridge and native NODtoNMB bundle compiler |
+| `src/tools/` | NILtoMAP, world-only MAPtoNIL, MAPtoNSD placements, NODscene bridge and NODtoNMB bundles |
 | `plugin/bpy-nodsdk-scghost/` | Blender 4.x import plugin (NOD, NMB, NIL, NAD) |
 
 ### Parsed formats
@@ -121,6 +121,34 @@ cmake --build build/niltomap --config Release
 NILtoMAP --thickness 1 input.nil output.map
 ```
 
+## MAPtoNIL CLI
+
+Compile classic MAP world brushes into NIL v35 with generated collision:
+
+```text
+MAPtoNIL --world-only --workspace DIR --asset-root ASSETS input.map output.nil
+```
+
+Physics bounds are computed from the world box with one unit of padding;
+`--physics-bounds MINX MINY MINZ MAXX MAXY MAXZ` is an optional override.
+Output must be inside the workspace and outside
+original assets. Non-world entities are excluded; no NSD/NMB is emitted.
+See [tools usage](src/tools/README.md#maptonil-world-compiler).
+
+## MAPtoNSD CLI
+
+Compile native template point placements into a fresh NSD v11:
+
+```text
+MAPtoNSD --workspace DIR --asset-root ASSETS input.map output.nsd
+```
+
+Supports native types 0/2/7, ordered NOT context and typed instance overrides,
+using sector 0 for the single-sector world. NIL compilation remains separate;
+no automatic NMB/NPD generation or gameplay-spawn proof is implied.
+Output stays inside the workspace and outside original assets.
+See [placement compiler limits and tests](src/tools/README.md#maptonsd-placement-compiler).
+
 ## Blender plugin
 
 ### Install
@@ -159,7 +187,9 @@ StarCraft: Ghost is one of the most iconic cancelled games in Blizzard history. 
 - This is not intended for commercial use.
 - All research is for educational and preservation purposes only.
 
-### AI Disclaimer
+---
+
+## AI Disclaimer
 
 This project uses AI-assisted development tools.
 

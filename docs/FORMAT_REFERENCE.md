@@ -306,7 +306,11 @@ The `.nrt` file contains the geometry/heightmap data while `.nut` contains the t
 **Magic:** `0x104C494E` ("NIL\x10")
 **Version:** 35
 
-The primary level geometry format. Contains sector-based BSP/portal architecture with per-vertex baked lighting, lightmap patches, and environment map references.
+The primary level geometry format. Contains sector-based BSP/portal architecture,
+per-vertex baked lighting, sector static lights for moving objects, and environment
+map references. The verified NIL v35 layout does not contain a separate lightmap
+texture atlas; older parser comments describing lightmap patches/atlases are not
+evidence of one.
 
 ### File Layout
 
@@ -317,58 +321,49 @@ The primary level geometry format. Contains sector-based BSP/portal architecture
   uint8[72] globalLight    Global light parameters
   float[3]  ambientColor   RGB ambient color
   uint32  numShaders       Material count
-  char[]  shaderNames      numShaders × 33-byte padded names
+  char[]  shaderNames      numShaders × 32-byte names
   uint16  numEnvMaps       Environment map count
-  char[]  envMapNames      numEnvMaps × 33-byte padded names
+  char[]  envMapNames      numEnvMaps × 32-byte names
   uint32  numSectors       Sector count
 
 [Sectors: numSectors entries]
   Per sector (variable size):
     uint32    flags
     float[3]  center       Sector center point
-    uint8     numPortals   Portal count
-    uint8[N]  portalData   Portal definitions (N × 16 bytes)
-    uint8     hasGeo       0=empty, 1=standard, 2=with lightmaps
-    uint8     vertType     0=standard, 1=with TBN, 2=vertex color
-    uint16    numVerts     Vertex count
-
-    [Vertex Data: numVerts × 36 bytes]
-      float[3]  position   World-space position
-      float[3]  normal     Surface normal
-      uint32    diffuse    BGRA packed vertex color (Xbox D3DCOLOR)
-      float[2]  uv         Texture coordinates
-
-    [TBN Data: numVerts × 36 bytes, if vertType == 1]
-      float[3]  tangent
-      float[3]  binormal
-      float[3]  normal
-
-    [Secondary Vertex Pool: if hasGeo >= 2]
-      uint8   secondaryVertType  Observed: 1 (with TBN)
-      uint32  secondaryVertCount
-      byte[]  vertices           secondaryVertCount × 36 bytes
-      byte[]  tbn                secondaryVertCount × 36 bytes
-      Previously labelled "lightmap patches" by the C++ parser.
-      NILtoMAP now selects this pool for bumped groups (vertType 3)
-      when the primary vertex pool has no TBN stream. Verified against
-      Hive level indices and group bounds; other secondary types remain
-      unsupported by the tool.
+    uint8     numBoundaryPlanes
+    float[4][] boundaryPlanes   Inward half-space planes (N × 16 bytes)
+    uint8     numVertexPools   Observed: 0, 1 or 2
+    [Per vertex pool]
+      uint8   poolType       0=primary, 1=primary plus TBN stream
+      uint32  numVerts       Native reads 4 bytes; uses low 16 bits
+                            Original counts are at most 65535
+      [Vertex Data: numVerts × 36 bytes]
+        float[3] position   World-space position
+        float[3] normal     Surface normal
+        uint32   diffuse    BGRA packed vertex color (Xbox D3DCOLOR)
+        float[2] uv         Texture coordinates
+      [TBN Data: numVerts × 36 bytes, if poolType == 1]
+        float[3] tangent
+        float[3] binormal
+        float[3] normal
+      Original pool sequences: [], [0], [1] or [0, 1].
+      These are not lightmap patches. Legacy parser names retain
+      "hasGeo", count/padding and secondary-pool terminology.
 
     uint16    numGroups    Surface group count
     [Surface Groups: numGroups entries, 47 bytes each]
       uint32  shaderIdx        Material index
       uint32  startIdx         Index buffer start
-      uint32  field8
+      uint32  field8           Unknown; observed 0
       uint16  numStripIndices  Triangle strip index count
       uint16  numListIndices   Triangle list index count
-      uint32  field16
-      uint8   vertType         Vertex type override
-      uint8   flag             Rendering flags
-      uint8   field22
+      uint32  field16          Unknown; observed 0
+      uint16  renderFlags      Not a vertex format
+      uint8   vertexPool       Selects owning sector's vertex pool
       float[3] bboxMin         Group AABB minimum
       float[3] bboxMax         Group AABB maximum
 
-    uint32    numIndices   Index count
+    uint32    numIndices   Always present, even without vertex pools
     uint16[]  indices      Triangle strip/list indices
 
     [Things: variable]
@@ -379,55 +374,350 @@ The primary level geometry format. Contains sector-based BSP/portal architecture
         uint32    field2
         float[12] matrix    4×vec3 row matrix
 
-    [SurfThings: variable]
-      uint16  numSurfThings
-      [SurfThing: 72 bytes each]
-        uint8[72] data      Opaque
+    [Static Lights: variable]
+      uint16  numStaticLights
+      [tRenderLight: 72 bytes each]
+        uint8[72] data      Native light record; legacy name "SurfThing"
 
     [EnvRefs: variable]
       uint16  numEnvRefs
-      char[]  envRefNames   N × 33-byte names
+      char[]  envRefNames   N × 32-byte names
 
     [Tail: 6 bytes]
-      uint16  tailField1   Unknown
-      uint32  tailField2   Unknown
+      uint16  tailField1   Unknown; observed 0
+      uint32  tailField2   Unknown; observed 1
 
-[Post-Sector Data: variable size, ~11–42% of file]
-  The data after the sector loop contains spatial/lighting structures
-  that have NOT been fully decoded. Summary from hex analysis:
+[Post-Sector Data: verified no-terrain layout]
+  uint16 terrainCount       0 in all eight original NIL fixtures
+                            Nonzero terrain needs a separate decoder.
+  uint16 physicsSetup       Observed 0; retained without inferred meaning
+  float[6] physics_bounds    Min xyz, max xyz
+  uint16 havokVersion       1
 
-  [Section 1: Portal Collision Mesh]
-    uint32       marker      Always 0
-    float[6]     aabb        Level bounding box (min xyz, max xyz), LE
-    uint8        type        Always 1
-    uint8        pad         Always 0
-    uint8        flag        Always 1
-    uint8        vertCount   Number of collision vertices
-    float[3][]   vertices    vertCount × 12 bytes, LE float3 positions
-                             Forms axis-aligned box faces (portal boundaries)
-    uint16       tail        Unknown (e.g. 0x90C0)
+  Repeat:
+    uint8 segmentType       0=end, 1=world rigid body
+    If 1:
+      uint16 vertexCount
+      float[3][] vertices   vertexCount positions
+      uint32 indexCount
+      uint16[] indices     Triangle-list indices
+      uint16 materialCount
+      byte[][8] materials  Opaque material records
+      float[4] moppInfo
+      uint32 moppCodeSize
+      byte[] moppCode      Havok MOPP acceleration bytecode
+      uint16 ownerType     0=world, 1=sector, 2=terrain
+      uint16 ownerIndex    Sector/terrain index when applicable
 
-  [Section 2: Triangle Indices]
-    uint8[~5]    zeros       Section separator
-    uint16[]     indices     Triangle indices into Section 1 vertices
-                             Pattern: (2,1,0), (3,2,4), (6,5,4), ...
-
-  [Section 3+: BSP Tree / Lightmap Atlas — NOT DECODED]
-    ~99% of the post-sector data. Byte entropy 7.0–7.3 / 8.0
-    indicates compressed texture data, likely the lightmap atlas.
-    Contains:
-    - Scattered float3 positions (world coordinates)
-    - AABB-like patterns throughout (~200+ in first 100KB)
-    - Possible BSP tree node data (splitting planes + child refs)
-    - Dense high-entropy regions (lightmap pixel data)
-
-  [Tail: Offset Table]
-    Last ~500–600 bytes of the file.
-    Pairs of (uint32 offset, uint32 flag) where flag ∈ {0, 1}.
-    Values are monotonically increasing within groups.
-    Groups separated by flag=0 entries.
-    Likely sector-indexed offsets into the lightmap/BSP data.
+  For each sector:
+    uint32 collisionPresent
+    For each render surface group:
+      uint32 mappingPresent
+      If nonzero:
+        uint32 collisionOffset
 ```
+
+The original loader (`Ghost.exe` with matching `Ghost.map`) reads sectors,
+terrain, pre-Havok setup, Havok body segments, then surface-group mappings:
+`gameWorld_LoadWorld` at `0x00534410`, `renderTerrain_ReadFile` at `0x005e5670`,
+`gameHavok_ReadPreHavokSetup` at `0x00518c40`, `gameHavok_ReadHavokFile` at
+`0x00519380`, and `tWorld::ReadHavokSurfaceGroupOffsets` at `0x00533dc0`.
+Mesh framing is read by `hkNSIMeshShape::ReadData` at `0x00518d10`;
+MOPP framing by `simPhysics_ReadMoppCodeFromFile` at `0x004921b0`.
+These are addresses in the supplied debug executable, not portable identifiers.
+
+`NILCollision` independently decodes this framing with bounded reads and exact
+EOF consumption. All eight original NIL files match. Earlier descriptions of
+the post-sector bytes as a portal collision mesh followed by a lightmap atlas
+were speculative and are superseded by the loader trace.
+
+### Native Lighting Contract
+
+The standalone [native lighting technical document](NATIVE_LIGHTING.md) covers
+the full implementation, authoring contract, algorithms and validation.
+
+World surfaces and moving characters use different lighting inputs:
+
+- World vertex colors are packed D3DCOLOR at byte 24 of each 36-byte primary
+  vertex. The original sector reader preserves these values in the vertex buffer.
+  Without authored lights the fresh world compiler writes `0xffffffff` for
+  every vertex: an unbaked white baseline, not generated illumination.
+  Authored `nod_static_light` entities enable CPU direct-light vertex baking.
+- The 72-byte sector records formerly called opaque `SurfThing` records are
+  static `tRenderLight` entries. The native sector reader at `0x005f2b62` reads
+  their uint16 count into sector offset `0x10`, then reads `count * 72` bytes into
+  the array at sector offset `0xe4`. Original `tObject::GetStaticLights` at
+  `0x00427690` selects from that same array. Baking vertex colors alone will not
+  supply these lights to moving NPCs.
+- Header bytes 8..79 are the global light record; bytes 80..91 are three ambient
+  floats. Native `rlLight_SetAmbient(float3*)` at `0x006022d0` scales its incoming
+  float channels by `0.16326530277729034` (constant at `0x007ab8a8`), not by
+  `1/255`. The extended native oracle verifies header copying to `WORLD+0x108`,
+  componentwise maximum with game-sector ambient at `+0xE8`, and rounded
+  packed-ARGB output from the complete setter. For normalized authored ambient
+  `a`, the compiler writes `clamp(a,0,1) * 255`. Native character shader setup
+  at `0x005FCB50` subsequently normalizes scaled ambient RGBA by approximately
+  `1/255` and uploads c116. CPU ambient uses `clamp(a,0,1) * 0.16326530277729034`.
+  Do not invert that native attenuation: the initial extended-export mapping
+  did so and produced ambient about 6.125 times too strong.
+
+Verified static-light field offsets, without inferring the remaining fields:
+
+| Byte | Type | Native use |
+|------|------|------------|
+| 0 | uint32 | Flags/metadata, retained without a complete bit interpretation |
+| 4 | uint32 | Light type; original sampled sector lights use point type 0 |
+| 8 | uint32 | Light-style index; 0 bypasses style lookup |
+| 12 | float[3] | RGB channels in 0..255 color units |
+| 24 | float | Render intensity; style-0 `renderLight_AddLight` sets it to input weight times field 28 |
+| 28 | float | Selection/base intensity multiplier |
+| 32 | float[3] | Direction used by the cone-light branch |
+| 44 | float[3] | World position |
+| 56 | float[2] | Retained without inferred meaning |
+| 64 | float | Distance cutoff used by type 3; not a type-0 cutoff in object selection |
+| 68 | float | Falloff coefficient |
+
+For type 0, original `CalculateLightIntensity` at `0x004270e0` calculates the
+object-selection weight as
+`max(RGB)/255 * intensity / (1 + falloff*d + 1.2*falloff*d*d)`.
+Here `d` uses the game's approximate square root, not an exact Euclidean square
+root. This weight is the native light-selection result, not proof of the final
+per-pixel shading equation or static shadow visibility. A separate native
+`renderLight_AddLight`/`rlLight_AddLight` oracle captures the D3D point-light
+setup: diffuse RGB is `RGB * renderIntensity / 255`, attenuation coefficients
+are `(1, falloff, 1.2 * falloff)`, and range is the constant `9999`, not field 64.
+
+`LightingNative` executes the original sector reader and object-light selection:
+zero lights gather none; generated point records reach the selector unchanged;
+color/intensity/falloff affect the real result; baked diffuse values reach native
+vertex buffers unchanged; the ambient prefix uses its actual engine scale. Ambient
+execution stops before graphics-state updates. No GPU render or complete game
+frame is claimed.
+
+The fresh compiler implements direct surface lighting with shared-edge
+subdivision and brush occlusion, plus matching type-0 character-light records.
+Both intensity fields are initialized from authored intensity. Falloff uses
+the original `worldLighting_CalcLightFalloff` equation with cutoff `0.2`.
+Explicit sun/moon uses a type-2 global record, normalized travel direction and
+sector flag `0x20`; native setup produces D3D directional type 3. CPU sun rays
+point against that direction. Explicit ambient uses the verified mapping above.
+Both header inputs remain zero when disabled.
+See the [authoring workflow](../src/tools/README.md#cpu-direct-light-baking).
+Four-sample oversampling, optional brush shadows and angle-threshold normal
+smoothing are compiler options. Indirect illumination, light styles, complete flag meanings, and per-sector
+light assignment remain separate work. In particular, native character lights
+can cross walls in the current single-sector output.
+
+### Collision Validation Scope
+
+Decoding these records does not establish runtime collision correctness.
+The world compiler must not emit NIL until collision/spatial generation and
+runtime loading are validated; a render-only NIL is not an acceptable substitute.
+
+### Bounded MOPP Generation
+
+`src/tools/common/mopp_compiler` builds a deterministic, balanced spatial tree
+for one mesh subpart, up to 65535 vertices and 4096 triangles. Input triangle
+indices remain the primitive keys; the second shape-key word is subpart zero.
+Invalid, degenerate or unrepresentable geometry fails without changing output.
+
+The generated subset uses byte-axis splits (`0x10`-`0x12`), two-offset
+16-bit splits (`0x23`-`0x25`), axis bounds (`0x26`-`0x28`), and triangle terminals
+(`0x30`-`0x51`). Multi-byte operands are big-endian within the bytecode.
+`moppInfo.xyz` is the world offset; `moppInfo.w` converts to 16.16 fixed point.
+Bounds include one quantization cell of slack. This is not a decoder for
+arbitrary original MOPP programs.
+
+Optional `MOPPNative` tests emulate the original debug routines:
+`queryAabb` (`0x0063aae0`), `querySphere` (`0x0063a0d0`) and
+`queryLongRay` (`0x0063bd80`). Accelerated ray results match the unaccelerated
+mesh cast (`0x0062f520`) across seven acceleration fixtures and five CSG fixtures,
+including 4096-triangle meshes, rotated/sloped surfaces, narrow gaps, negative
+coordinates and different scales. The selected test room is an optional extra
+fixture. Equal-distance shared-edge hits may select either native-valid triangle.
+These are query checks, not full in-game world validation.
+
+`hkNSIMeshShape::GetSoundType` (`0x004504e0`) also establishes part of each
+8-byte material record: the first `uint32` is an exclusive triangle-key limit,
+and the following `uint16` is the sound type. The final two bytes remain opaque;
+original files contain nonzero values, so readers must preserve them.
+
+### Collision Surface Lookups
+
+`tSector::FindSurfaceGroupWithTri` (`0x0052ecb0`) scans groups in reverse order,
+returning the last mapped group whose offset is at most the triangle key.
+Offsets are inclusive triangle-key starts, not byte/index-buffer offsets.
+The loader sets runtime group flag `0x02` when a mapping is absent, and clears
+it when present. Keys below the first mapped start have no surface group.
+Equal offsets are allowed; the later group wins.
+
+Material lookup scans forward and uses the first record whose exclusive limit
+exceeds the key. Missing records produce no sound override. `NILCollision`
+exposes both lookups without changing its lossless raw material records.
+Optional native tests exercise the same boundary and duplicate-offset cases.
+Across all eight originals, present sectors each resolve to one sector-owned
+collision body; offsets are ordered and at most its triangle count, and
+material limits are ordered and within their body's triangle count.
+
+`world_geometry` reconstructs bounded classic MAP half-spaces, then subtracts
+other brushes' interiors from their polygons. Same-facing coplanar overlaps
+retain the earliest source brush's material and classic texture fields;
+opposing shared faces are removed. Split fragments retain their source brush.
+Seam vertices are welded, precise-position T-junctions are inserted into edges,
+and ear triangulation preserves collinear boundary vertices.
+
+Each input solid is checked for closed manifold boundaries and positive volume.
+The union mesh has balanced directed edges; edge/vertex-only contacts between
+solids are retained rather than filled. Binary32 precision loss, excessive
+fragment/work counts and more than 4096 triangles before/after CSG are rejected.
+Geometry and MOPP output remain unchanged on failure.
+
+The selected test room now has 32 exterior polygons, 32 collision vertices and
+72 triangles. Exposed area is 2876 (down from 2964); solid volume remains 1302.
+The triangle count stays unchanged because internal-face removal is accompanied
+by seam-preserving triangulation. Native rays from the room hit the floor at
+Z=0, ceiling at Z=11, X walls at -9/10 and Y walls at -7/7, while rays crossing
+the four internal wall joins no longer hit. Exact cell-union tests independently
+check volume and exposed area, alongside analytic sloped/rotated overlaps.
+`world_render` prepares separate per-surface vertices with normals and classic
+UVs while preserving collision triangle order. UV-axis selection uses the source
+plane's binary32 cross product and double normalization, matching Radiant rather
+than the CSG normal near dominant-axis ties. Cardinal rotations are exact; other
+rotations, negative scales, shifts and image-size division follow Radiant's float
+projection. CSG split vertices retain their source face's projection.
+
+The read-only `nod_materials_describe` API returns canonical native shader names
+(at most 31 bytes), diffuse references, native-script provenance and verified
+editor DDS dimensions.
+Native diffuse lookup retains shared/matching-level archive precedence.
+Editor definitions are separately read from `Materials/shaderlist.txt`, so native
+level overrides cannot alter authored UV scale. Editor images follow Radiant's
+exact-path, `Materials/`-path and unambiguous-basename lookup, including format
+priority. Missing unrelated shaderlist archives warn and are skipped, as in
+Radiant; missing/ambiguous requested images fail. DDS headers, formats and top
+mips are validated without generating preview files or accepting white fallbacks.
+Non-DDS editor images, standalone NAS shaders and non-DDS-backed materials are
+explicitly unsupported.
+
+The selected room has 136 render vertices, 216 indices and two native materials:
+`DefaultGrid16` (1024x1024 editor image) and `GE_tileConcreteA_wht` (256x256).
+Surface seams account for the extra vertices; collision remains 32 vertices and
+72 triangles. Projection, material and render builders preserve output on failure.
+Generic tests cover orientation/tie rules, rotations, non-square images, negative
+scales, CSG continuity, material aliases, bank overrides and malformed input.
+`world_sector` encodes one primary-pool sector with triangle-list groups,
+white vertex colors and no boundary planes/instances/environment references. Adjacent
+same-material surfaces merge without changing triangle order; each group retains
+its exact AABB and inclusive collision-key start. Shader indices retain material
+order. Nonzero authoring flags and native scripted shaders are rejected until
+their flags/TBN requirements are implemented.
+
+The native reader and group draw routine verify the 36-byte vertices, 47-byte
+disk groups, index ranges, flags and pool selection. All 619 original sectors
+have opaque tail (0, 1); all original groups have zero field8/field16. The encoder
+uses those values and observed standard-sector flags 5, without assigning
+unverified meanings. Sector records do not include a world header or collision
+body and cannot be published as NIL.
+The selected room produces two groups and a 5462-byte sector record.
+
+`SectorNative` executes the hash-pinned original reader and fallback draw
+routine with mocked file, allocator and GPU boundaries. It checks small,
+4096-triangle and selected-room records, exact vertex/index bytes, shader
+pointers, bounds, draw inputs and truncation failures. It does not verify
+shader execution, owner-pointer setup, visibility, complete level loading or
+actual rendering.
+
+`world_image` assembles a complete NIL v35 image in memory: generated header,
+one sector, no terrain/environment maps, one sector-owned mesh/MOPP body, no
+custom sound ranges and exact group collision mappings. It preserves the list
+of excluded entities. Zero global-light/ambient records use the baseline also
+observed in the original menu; authored lighting is not compiled or borrowed.
+Image physics bounds must finitely, strictly enclose geometry.
+Their float span must remain finite, and every collision vertex must lie within
+the world bounds. The compiler regenerates MOPP and rejects a mismatched program.
+The selected room produces an 8220-byte image. `MAPtoNIL --world-only` publishes
+it through checked atomic replacement inside an existing workspace, outside the
+asset root. CLI bounds default to the compiled world box padded by one MAP unit
+per side, rounded outward if necessary; an explicit override remains available.
+Non-world entities are excluded and counted, not included in automatic bounds.
+The published file matches the image fixture and passes native loading/ray checks.
+
+The native point-in-sector tests interpret each boundary record as `(nx,ny,nz,d)`
+and accept a point when every `dot(n,p) >= d`. Legacy parsers called these
+records portals. With zero planes, the single sector intentionally spans all
+space; this does not remove the physics broadphase bounds.
+
+`WorldNative` executes original sector/terrain/mesh/MOPP readers, physics-bound
+loading, group mapping, world/sector postprocessing, default-shader group
+initialization and point-to-sector selection. Native rays use the mesh/program
+read from the emitted image and resolve their hits through native surface-group
+lookup. File, allocator, GPU and progress facilities are mocked; minimal shader
+objects use the real default-shader vtable but do not load textures.
+Header framing and zero-light records are checked independently.
+This component suite does not register a physics body.
+
+`PhysicsNative` executes original `CreateHavokWorld` (`0x00493d10`),
+`gameHavok_ReadHavokFile` (`0x00519380`), rigid-body construction, `hkWorld::addEntity`
+and sector-property assignment. It checks the world backlink, fixed-island
+membership/index, sector body pointer, native property key 1 and single-reference
+ownership of the body, MOPP tree, mesh and code. Mesh/program bytes are read from
+the actual registered body's shape, not a separately constructed query fixture.
+The native world retains the explicit image bounds.
+
+Original broadphase AABB queries return the generated body's collidable and
+reject clear space. The original gameplay first-hit ray path checks distance,
+position, inward normal, collidable, triangle key and native surface-group lookup.
+This gameplay path uses sector-owned bodies directly; it is not itself proof of
+broadphase traversal. Both paths are tested independently on small, 4096-triangle
+and selected-room images, including all six interior boundaries and a short
+interior miss. Fixture margins are test data, not a production-bounds policy.
+
+Additional facility mocks cover checked size/tag allocation/free and profiling
+timers. Allocations and frees are poisoned; unknown memory interfaces fail.
+Native stack overflow/underflow routines execute unchanged. A dedicated x86 FS
+segment backs the SEH chain while null memory remains unmapped.
+
+`SolverNative` executes original sphere/inertia/body construction and
+`hkWorld::stepDeltaTime` (`0x0064bd40`), including collision detection, integration
+and `_hkSolveConstraints` (`0x006a2990`). The original scratchpad factory
+(`0x0069d360`) supplies the solver workspace. Contact-listener and solver hooks
+only observe execution; no contacts, impulses or resulting transforms are mocked.
+Only the existing profiling facilities gain contact-timer backing.
+
+Zero-gravity motion and gravity-driven free fall match semi-implicit integration
+within 0.00002 units, with no contacts or constraint-solver calls. Contact cases
+run 180 steps at 1/60 second: small and 4096-triangle floors plus all six selected
+room boundaries. A radius-0.25 sphere rests 0.30 units from the source plane,
+including the native mesh's 0.05 skin. Clearance never falls more than 0.005
+below that distance. The final 60 steps hold position and speed within 0.001,
+with at most 0.001 tangential drift. Actual contact events reference the
+generated world body and probe body; the static world remains fixed.
+The native contact constraint retains both entities. Probe creator references
+remain owned by the test for its emulator lifetime.
+
+These controlled sphere tests do not validate player/controller behavior,
+arbitrary dynamics, NSD entities, shader/visibility rendering or complete game
+loading. Those smoke tests are deferred, not gates on world-only publication.
+
+`ShaderNative` loads the selected image with original shader registration,
+factory dispatch, hash tables and `cShader::Load` (`0x005fdf80`). Original texture
+resolution and D3DX file/DDS parsing execute through native CPU mip generation.
+Read-only file, allocation, display-mode and GPU-resource facilities are mocked;
+the GPU buffers are CPU-backed, not rendered. Missing-texture fallback requests
+fail explicitly. Shader/texture names, loaded state, dimensions, format, references
+and group shader pointers are checked.
+
+`DefaultGrid16` loads as 1024x1024 DXT1 with 11 mip levels;
+`GE_tileConcreteA_wht` loads as 256x256 DXT3 with 9. Base uploads match the original
+DDS payloads exactly; all native-generated levels receive writes. Cache hits
+retain the original shader without new file reads, uploads or allocations.
+Checked memory domains and resource references reject invalid frees/levels.
+
+Original visible-sector list building and recursion retain the single zero-portal
+sector, clip rectangle and generation, including rollover. Original box-frustum
+construction/AABB tests select both groups, reject distant/touching bounds and
+isolate each material run. These are CPU visibility prerequisites, not camera
+projection, portal traversal, sector rendering or GPU shader execution.
 
 ### Per-File Post-Sector Statistics
 
@@ -457,59 +747,74 @@ Simple list of effect names referenced by a level, one per line. These names cor
 
 ---
 
-## 10. NPD — Nihilistic Patrol Data
+## 10. NPD — Navigation Graph
 
 **Extension:** `.npd`
 **Type:** Binary
 
-AI navigation/patrol waypoint graph for a level. Contains waypoint nodes with
-positions in navigation-map coordinate space (NOT world-space) and an adjacency
-list defining connectivity between waypoints for AI pathfinding.
+AI navigation waypoint graph for a level, with **world-space XYZ positions** and
+directed links. The original loader copies position floats unchanged, then calls
+the world's sector lookup with those same positions. Earlier claims here about
+a separate approximately 4x XY scale and compressed/floor-index Z were incorrect.
 
-**Important:** NPD is NOT entity placement data. Entity world-space positions
-are defined in the NSD file. NPD positions are in a separate 2D navigation-map
-coordinate space with a compressed Z axis (floor/elevation index). The
-`waypointId` field is a unique waypoint identifier, not an NSD entity reference.
+NPD is not entity placement data; NSD supplies entity placements. A waypoint ID
+is a unique navigation identifier, not an NSD entity reference. The original
+loader and path search are exercised by `PathNative` using freshly compiled NPD.
 
 ### Header (8 bytes)
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| 0x00 | 2 | version | Format version (= 2) |
+| 0x00 | 2 | version | Fresh writer uses 2; original runtime accepts 1 or 2 |
 | 0x02 | 2 | nodeCount | Number of valid waypoint records |
-| 0x04 | 4 | unknown | Reserved / unknown |
+| 0x04 | 2 | linkCount | Number of directed link records |
+| 0x06 | 2 | nextUniqueId | Next editor waypoint ID |
 
 ### Waypoint Records (nodeCount × 26 bytes)
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0x00 | 2 | waypointId | Unique waypoint identifier (u16) |
-| 0x02 | 12 | position | Navigation-map position (3 floats, XYZ) |
-| 0x0E | 2 | flags | Waypoint flags (0=normal, 1=special, 1024=?) |
-| 0x10 | 4 | color | Debug visualization color (ARGB) |
-| 0x14 | 6 | extra | Additional data (3 × u16) |
+| 0x02 | 12 | position | World-space XYZ (3 float32 values) |
+| 0x0E | 2 | flags | Node flags; fresh ordinary nodes use 0 |
+| 0x10 | 1 | component | Connectivity group; native search compares groups first |
+| 0x11 | 2 | associationA | Associated-link index, FFFF when absent |
+| 0x13 | 2 | associationB | Associated-link index, FFFF when absent |
+| 0x15 | 2 | sector | Sector index; original loader recomputes it |
+| 0x17 | 2 | firstOutgoing | First outgoing link's array index |
+| 0x19 | 1 | outgoingCount | Number of outgoing links, at most 255 |
 
-### Adjacency List (remaining bytes after records)
+### Directed Links (linkCount × 6 bytes)
 
-After the waypoint records, the rest of the file is an adjacency list defining
-connections between waypoints. Each entry is 6 bytes:
+Links follow the waypoint records and must be grouped by source node to match
+each node's outgoing range. Each entry is 6 bytes:
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0x00 | 2 | fromNode | Source node index (0-based record index) |
 | 0x02 | 2 | toNode | Destination node index (0-based record index) |
-| 0x04 | 2 | cost | Edge cost/weight (0, 1, 2, 3, or special values) |
+| 0x04 | 2 | flags | Link flags, not a numeric cost; fresh ordinary links use 0 |
 
-The adjacency list uses **0-based record indices** (not waypointIds). Typical
-levels have ~3–4 links per node, forming 1–3 connected components.
+Endpoints are **0-based record indices**, not waypoint IDs. The loader derives
+normalized direction vectors from endpoint positions. Reverse travel requires
+a separately authored reverse link.
 
-### Coordinate Space
+`MAPtoNPD` resolves authored waypoint IDs to record indices, groups outgoing
+links, and assigns weakly connected component IDs 0..254. It supports one sector
+(0), normal flags, and absent associations. Special traversal/association
+semantics are not yet reconstructed. Fresh IDs are 0..65534; at most 65535 nodes,
+65535 links, 255 outgoing links per node, and 255 components are representable
+by this authoring profile. Zero, underflowing and overflowing squared link
+lengths are rejected before native normalization.
 
-NPD positions use a navigation-map coordinate system distinct from NSD
-world-space:
-- X/Y axes cover approximately the same spatial extent as NSD but at ~4× scale
-- Z axis is compressed to floor/elevation levels (e.g., -10.9, -7.6, 1.2, 2.9, 9.9)
-- Not directly usable for entity rendering; only for AI pathfinding logic
+The legacy `NPDParser` keeps its version-2, byte-preserving API: `color` and
+`extra` are raw packed views of offsets 0x10..0x19, not visualization data, and
+`LinkRecord::cost` is the old name for link flags. Correct decoded accessors are
+provided without changing legacy serialization. Its permissive parsing is not
+a substitute for the new graph compiler's validation. Existing source-bound
+`nod_id` imports and raw edit keys are not fresh graph authoring entities.
+Their legacy `nod_space=navigation` tag is retained for source-workflow
+compatibility; it does not imply a different physical coordinate system.
 
 ---
 
@@ -545,24 +850,79 @@ instance data (positions, rotations, properties). This is the **authoritative
 source** for entity world-space positions. Used to extract entity spawn points
 including the player "ghost" entity.
 
-### Header (92 bytes)
+### Prefix and first object (verified Ghost scenes)
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0x00 | 4 | magic | `NSD\x10` (0x1044534E) |
-| 0x04 | 4 | entityCount | Header entity count (cutscene entities?) |
-| 0x08 | 72 | metadata | Level metadata / ambient data |
-| 0x50 | 4 | totalEntities | Total entity count from scanner (at offset 80) |
-| 0x54 | 4 | sectorCount | Number of sectors/rooms (at offset 84) |
-| 0x58 | 4 | reserved | Zero padding |
+| 0x04 | 4 | version | Scene version; supplied scenes use 11 |
+| 0x08 | 64 | metadata | Two 32-byte fields; semantics not fully reconstructed |
+| 0x48 | 4 | flags | Scene flags |
+| 0x4C | 4 | numTemplateFiles | Count of following 32-byte NOT archive names |
+| 0x50 + 32*N | 4 | objectCount | Declared object count after the archive-name list |
+| 0x54 + 32*N | 4 | modifierCount | First object's modifier count, **not a sector count** |
+| 0x58 + 32*N | 4 | modifierID | First modifier ID, normally 0 (`basedon`) |
+| 0x5C + 32*N | 32 | templateName | Payload of the first `basedon` modifier |
+
+`N` is `numTemplateFiles`. All eight supplied scenes have no extra archive
+names, so the commonly observed first template name starts at byte 92.
+The verified loader stores archive handles at scene offsets `0x160` through
+`0x17C`: eight slots before the object-pointer array at `0x180` and world pointer
+at `0x184`. `MAPtoNSD` therefore caps extra archives at eight. The legacy SDK
+scanner accepts up to nine nonempty, NUL-terminated ASCII names (32 bytes each), validates
+the entire list, reads the shifted object count, and starts placement scanning
+after that list. Names are exposed in source order. Archive names are not
+placement/type strings or sky-model references.
+The parser still uses a tag-validated placement scan rather than a complete
+sequential decoder for frames, parameters, inline models, sectors, camera data,
+lights, sounds, and subsequent scene sections.
+
+### Minimal compiled point-scene profile
+
+`MAPtoNSD` writes version 11, empty metadata, zero flags, a verified ordered
+archive list and an object count. Each supported point placement has a counted
+36-byte modifier array, followed by this complete 20-byte empty tail:
+
+| Bytes | Field | Compiled value |
+|-------|-------|----------------|
+| 4 | motion-frame count | 0 |
+| 4 | script-parameter count | 0 |
+| 4 | inline-model-present flag | 0 |
+| 4 | sector-link count | 0 |
+| 2 | camera-region-present flag | 0 |
+| 2 | prelighting count | 0 |
+
+The trailer after all objects is 192 bytes: a zero sound count, three zero
+auxiliary world-array counts, two empty 32-byte fields, 48 zero bytes of numeric
+environment fields, an empty 32-byte sky-model reference and an empty 32-byte
+sky-animation reference. Scene flags remain zero, so the optional `0x08000000`
+section is absent. This is a bounded empty-scene profile, not a general
+sequential decoder for arbitrary NSD content.
+
+Original native scene/file readers consume this entire framing in local tests.
+Object construction and lifecycle/postprocessing are substituted; the test
+compares the exact modifier bytes handed to the native object-factory boundary.
+It does not prove actual Nova/player/controller creation or resource loading.
+Supported placement types are 0, 2, 7 and 8. Type 8 is `tContainer`, not a
+brush-region record. The native `gameThing_New` dispatch at `0x52FE10` allocates
+`0x3C0` bytes and invokes `tContainer::tContainer` at `0x518380`, whose completed
+object has vtable `0x78E538` and native type 8 at offset `0x10`. A separate test
+executes that dispatch and its original constructor chain, substituting only
+heap allocation. The mixed-scene test checks a type-8 template reference and
+local override through the original scene reader's object-factory boundary.
+Container resource loading, inventory and gameplay initialization remain
+outside these tests.
 
 ### Entity Block Layout
 
-Entity blocks begin at offset 92 and are variable-length. Each entity uses a
-tag-based property system with 36-byte property slots:
+Objects contain a counted array of **36-byte runtime modifiers**, shared with
+NOT. The commonly observed first template-name payload is at offset 92; it is
+not the beginning of an object record. Relative to that payload at `T`:
 
 ```
-[Type Name: 32 bytes]
+[Modifier Count: uint32 at T-8]
+[First modifier ID: uint32 at T-4, normally 0 = basedon]
+[Template Name: 32 bytes at T]
   Null-terminated ASCII string, zero-padded to 32 bytes.
 
 [Property Block 0 (rotation): 36 bytes at T+32]
@@ -575,15 +935,13 @@ tag-based property system with 36-byte property slots:
   float[3] position   World-space position (D3D Z-up coordinates)
   byte[20] filler     Leftover name bytes / padding
 
-[Property Block 2 (sector): 36 bytes at T+104]
-  uint32  tag3        = 3 (model entity) or 15 (region entity)
-  uint32  sectorId    Room/sector index (groups entities by area)
-  float[2] posYZ      Duplicate of position Y, Z (stale data)
-  byte[20] filler     Leftover name bytes / padding
+[Property Block 2: 36 bytes at T+104 in common records]
+  uint32  tag         Often 3 (sector) or 15 (script)
+  byte[32] payload    Interpret using the modifier ID, not the slot number
 
 [Property Block 3+ (optional): 36 bytes at T+140]
-  uint32  tag4        = 4 (model name) or 0x2E (46, script ref) etc.
-  char[]  value       Model filename or script name (null-terminated)
+  uint32  tag         E.g. 4 (model), 46 (CASTID), 161 (EFFECT1)
+  byte[32] payload    Fixed width even for scalar/vector values
   ...                 Additional property blocks follow in 36-byte steps
 ```
 
@@ -591,21 +949,51 @@ tag-based property system with 36-byte property slots:
 
 | Tag | Meaning | Data |
 |-----|---------|------|
+| 0 | basedon | Template reference, resolved case-insensitively |
 | 1 | Rotation | 3 floats: pitch, yaw, roll (degrees) |
 | 2 | Position | 3 floats: X, Y, Z (D3D world-space) |
-| 3 | Model entity | sector ID (u32), then stale position data |
+| 3 | sector | Sector ID (u32); remaining payload bytes are not additional properties |
 | 4 | Model name | Null-terminated string (e.g., "door.nod") |
-| 15 | Region class | Region class name (e.g., "cRegionSound") |
-| 46 (0x2E) | Script ref | Script/animation name string |
+| 15 | script | Script class/reference; often used by region records |
+| 20 | type | Runtime thing-type enum, distinct from the template name |
+| 46 (0x2E) | CASTID | String; **not** the script modifier |
+| 47 | DESCRIPTIONID | String; **not** root/template flags |
+| 143 | MODELSCALE | Float32 |
+| 161 (0xA1) | EFFECT1 | String; **not** the script modifier |
+| 175 | MODELOFFSET | Three float32 components |
 
-### Entity Type Categories
+The field historically called `type_name` identifies a template, not the runtime
+thing class. Expand its modifiers to obtain `type`, `model`, scripts, flags,
+and other properties. Characters, decorations, and region-like templates should
+not be assigned model aliases or skipped solely from a hard-coded name list.
 
-Entity `typeName` values classify entities:
-- **Model entities** (tag3=3): `instance_nocfile`, `ge_door*`, `movetrack_*`, `movenone_*`, etc.
-- **Region entities** (tag3=15): `trigger_region`, `camera_region`, `alarm_region`, `norain_region`
-- **Character entities**: `ghost` (player), `scvdriver*`, `infantry_hauler*`, `hydralisk*`, etc.
-- **Pickup entities**: `powhealth`, `powenergy`, `powgrenade`, `powdata`, etc.
-- **Skip types** (non-visual): `script_object`, `halo_*`, `cone_*`, `sparkfountain`, etc.
+### Inline Region Geometry
+
+For counted region records, the 32-byte type name is the payload of modifier
+tag 0. A modifier count precedes that tag, eight bytes before the type name.
+The count includes the type modifier, and each modifier occupies 36 bytes.
+After the modifiers come:
+
+1. A `uint32` motion-frame count and that many 28-byte frames.
+2. A `uint32` script-parameter count and typed parameters. Types 1-5 and 8-11
+   have a four-byte payload; type 6 has none; type 7 stores a `uint32` byte
+   length followed by that many string bytes. Each parameter starts with a
+   four-byte type.
+3. A `uint32` inline-model-present flag. A nonzero flag is followed by a
+   standard 92-byte NOD header and its shader/bone/vertex/index/group streams.
+   The inline model's trailing marker representation is not needed for bounds.
+
+The region parser computes a local AABB from vertices referenced by valid
+LOD-0 triangles, handling per-set bases, split TBN streams, triangle lists,
+degenerate connectors, and strip restarts. Header AABBs and unreferenced
+vertices do not define the computed result. Native MatrixPYR rotation and the
+entity position transform this box into a world-space bounding envelope.
+Meshes and trailing region data remain byte-preserved, not rewritten.
+
+This layout was verified against the native scene/frame/parameter/inline-model
+readers and all 286 regions in the seven complete supplied Xbox level triplets.
+Unknown layouts/types are explicitly marked unavailable rather than searched
+heuristically for plausible floating-point bounds.
 
 ---
 
@@ -683,7 +1071,9 @@ Lines beginning with `#` are comments. Keys and values are separated by whitespa
 **Magic:** `0x10544F4E` ("NOT\x10")
 **Version:** 1
 
-Entity template database defining the property hierarchy for all game object types. Contains ~1224 templates organized in an inheritance tree rooted at 8 base classes.
+Entity template database containing 1,224 templates in the supplied Global.not.
+Inheritance is an ordered expansion of modifier references, not necessarily a
+single-parent tree.
 
 ### File Layout
 
@@ -699,31 +1089,103 @@ Entity template database defining the property hierarchy for all game object typ
 
 [Template Data: variable]
   Per template:
-    uint32  flags         47=root, 0=child
-    char[32] parent       Parent template name
-    uint32  numProperties Property count
-
-    [Properties: variable]
-      Three encoding types:
-        Standard (36 bytes): uint32 propID + uint8[32] value
-        Boolean  (5 bytes):  uint32 propID(=1) + uint8 value
-        Comment  (variable): uint32 strLen + char[] text
+    uint32  modifierCount
+    [modifierCount × 36 bytes]
+      uint32   modifierID
+      byte[32] payload
+    uint32  editorDataLength
+    byte[editorDataLength] editorData
 ```
 
-### Root Templates (flags=47)
+The first modifier is often `basedon` (ID 0), but some grouping templates begin
+with `DESCRIPTIONID` (ID 47). There is **no flags=47 header field**. ID 1 is the
+orientation vector with a full 32-byte payload, **not a five-byte boolean**.
+Comments/empty editor strings are part of the separate editor-data block,
+not modifiers. Unknown editor bytes and archive tail bytes must be retained.
+The supplied final `scourge_track` record has 36 bytes beyond the loader-consumed
+record; the tools preserve and diagnose them rather than invent a property.
 
-| Name | Description |
-|------|-------------|
-| `_ACTOR` | Characters, NPCs, enemies |
-| `_EFFECT` | Visual/audio effects |
-| `_PROJECTILE` | Weapons projectiles |
-| `_PROP` | Static/dynamic props |
-| `_REGION` | Trigger regions/volumes |
-| `_SENSOR` | Detection sensors |
-| `_UIELEMENT` | HUD/UI elements |
+### Expansion and model lookup
 
-All other templates inherit from one of these roots.
+- Startup opens `global`, then scene loading opens the NSD's archive names in
+  their declared order, relative to `Misc/Templates`. Missing filename
+  extensions receive `.not`; archive lookup and names are case-insensitive.
+  The SDK reads extracted files, including nested relative paths, and rejects
+  absolute/traversing paths.
+- All open archives share one template-name registry. The hashtable refuses a
+  duplicate key, so **the first-loaded definition wins**, including Global over
+  scene archives. This is separate from last-value-wins modifier expansion below.
+  Reopening an archive does not register it twice. SDK diagnostics identify
+  shadowed templates and the winning archive.
+- References may cross archive boundaries, including references to definitions
+  in a later archive. All requested files are indexed before expansion.
+  The SDK publishes a replacement context only after every requested file is
+  available and valid. Unlike the engine's warning-and-continue load path, tools
+  reject incomplete archive contexts rather than preview with partial data.
+- Names are matched case-insensitively.
+- Process modifiers in source order. For ID 0, expand the named template at that
+  position. Other IDs replace an existing expanded entry of the same ID, or append
+  a new entry. A later reference can therefore override an earlier local value.
+- Missing templates, cycles, and expansion beyond 128 modifiers fail explicitly;
+  no partial effective-property list is returned by the SDK.
+- The same resolver accepts a complete NSD placement array. Local values retain
+  placement provenance; referenced values retain their supplying NOT template.
+  A local model does not bypass earlier missing/cyclic references, and a later
+  reference can replace that local model. Preview model selection and the NSD
+  editor's effective-property view use this shared expansion for counted arrays.
+- Runtime creation reads ID 20 (`type`), then dispatches expanded modifiers to
+  thing/actor/object/script/etc. handlers. ID 4 supplies the object's model.
+- An explicit empty model override remains empty; it is not a request to guess
+  a filename from the entity name.
 
+### Verified static model transforms
+
+Expanded modifiers execute in their resolved order. ID 4 creates the model
+instance with uniform scale one. ID 143 (`MODELSCALE`) sets uniform scale only
+after an instance exists; earlier values are ignored. Zero and negative scales
+are not rejected by the engine setter. ID 174 (`MODEL_LODSCALE`) changes LOD
+selection, not geometry.
+
+ID 175 (`MODELOFFSET`) is added directly to the model-to-world translation when
+renderflags (ID 12) have bit `0x2000`; it is not rotated or scaled:
+`world = origin + enabled_offset + rotation * (scale * model_vertex)`.
+The object constructor does not explicitly initialize this vector. Tools reject
+an enabled offset with no explicit value rather than inventing one. Inactive
+offset payloads do not affect static previews, and names ending in `_offset`
+have no special transform meaning.
+
+Evidence: `0x52ec90` (object modifiers), `0x6884e1` (new instance, scale one),
+`0x52f7d0` (uniform scale setter),
+`0x43d870`/`0x43d8d0` (offset gate/accessor), `0x546cc0` (renderflags),
+`0x43d080` (world-space offset addition), and `0x687172` (model prescale).
+The 3,379 observed placements include two scales of 0.75 and 42 active nonzero
+offsets; every active offset has ID 175. Static previews do not reconstruct
+animation, skeleton updates, or every gameplay handler.
+
+### Verified metadata and evidence
+
+The engine memory export contains 177 records at `0xA05250`, each
+`name[32] + uint32 handler + uint32 nativeType` (40 bytes). Dispatch words start
+at `0xA05270`. The SDK's `NODProperties` catalog matches every record.
+Type codes 0/2/3/4 correspond to string/float32/integer bits/vector3.
+Integer signedness, flag bit names, enum names, handler-specific semantics, and
+cross-file validity are not inferred from that storage code alone.
+ID 68 (`PARTICLENAME`) has unusual code 68 in this export and remains raw.
+
+Loader/expansion evidence in the supplied `scghost-rev` export:
+`0x68efb0` (NOT archive + editor data), `0x68f680` (count × 36-byte modifiers),
+`0x543f60` (ordered replacement), `0x68f520` (case-insensitive lookup),
+`0x53f2e0` (NSD modifiers and following sections), `0x52ec90` (object model),
+`0x68edb0` (Global opened at startup), `0x53dd10` (scene archive list),
+`0x6eab30` (duplicate hash keys are not replaced), and `0x6eb540`
+(case-insensitive key comparison). The archive registry has 64 loaded-file slots;
+the scene structure's nine handles bound a single scene's declared list.
+The reconstructed wrappers contain assumptions; the raw decompile and real
+Ghost files are used to cross-check them.
+
+All 3,379 observed placements across eight NSDs have a verified counted array,
+one `basedon`, no repeated modifier IDs, and IDs within 0–176. This does not
+establish a complete NSD serializer or full gameplay schema.
 ---
 
 ## 17. NFX — Nihilistic Effects
@@ -1016,7 +1478,7 @@ Multi-model bundle format containing multiple LOD variants of models. 40 files i
 [Header: 12 bytes]
   uint32  version      1 or 2
   uint32  modelCount   Number of models in bundle
-  uint32  totalMem     Total memory estimate
+  uint32  totalMem     Native object-arena allocation (not file/GPU-buffer size)
 
 [Per Entry]
   [Compact Header: 5 bytes]
@@ -1051,8 +1513,40 @@ Multi-model bundle format containing multiple LOD variants of models. 40 files i
       + jointMapSize bytes bone remap table
 
     [Markers: markerCount × 68 bytes]
-    [Padding: 1 byte]
+      4-byte packed marker identity + 4x4 float matrix
+    [Version 2 only]
+      uint8 hasColors (0 or 1)
+      If 1: packed colour bytes, 4 bytes per vertex across all sets
 ```
+
+### Verified NOD/NOC v10 compilation
+
+`NODtoNMB` emits version 2 and model flags `0x00000a00` for the verified v10
+input layout. NOC collision models use the same model-record layout and retain
+their `.noc` member identities. The writer does not substitute visible NOD
+meshes for collision inputs.
+
+The target arena allocation is summed per member:
+`328 + 4*shaderCount + 32*boneCount + 108*meshGroupCount + 80*markerCount`.
+Vertex/index/TBN/colour buffers and blend buffers are allocated separately by
+the runtime. These are target-runtime sizes, independent of host pointer width.
+The formula matches 39 of the 40 local original bundle headers; the shipped
+`2_3_1a_Escape_Mini.nmb` header is 480 bytes lower. New outputs calculate the
+allocation rather than copying that exceptional header.
+
+The 56-byte source mesh record maps to compact NMB records as follows:
+shader index `[0:4]`, vertex-set byte `[54]`, four LOD records `[4:28]`,
+original-group/blend-count/link bytes `[30:33]`, palette size `[53]`, then
+that many palette bytes from `[33:53]`. Source vertex advance `[28:30]`
+must equal LOD-0 vertex count because the bundle derives per-set bases from it.
+Blend-shape counts and unknown reserved extensions are rejected by the current
+compiler, rather than silently discarded.
+
+NOD markers contain a packed 4-byte identity and twelve floats (four 3-element
+rows). Compilation appends a fourth component `0, 0, 0, 1` to those rows.
+Bone positions/offsets/parent/joint map to the 26-byte native record; source
+orientation matrices and padding are not fields of bundled bones. Optional
+source colour extensions are retained as the version-2 colour stream.
 
 ### Vertex Types (same as NOD)
 
