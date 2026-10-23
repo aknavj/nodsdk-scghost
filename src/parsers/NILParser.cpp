@@ -80,6 +80,7 @@ void NILParser::free_sectors() {
 			free(s.things);
 			free(s.surf_things);
 		}
+
 		free(lvl.sectors);
 		lvl.sectors = nullptr;
 	}
@@ -131,6 +132,7 @@ int NILParser::parse(const char *filePath) {
 		printf("NILParser: too many shaders (%u)\n", lvl.num_shaders);
 		return 0;
 	}
+
 	for(uint32_t i = 0; i < lvl.num_shaders; i++) {
 		ReadName32(data, off, lvl.shader_names[i]);
 		off += 32;
@@ -204,6 +206,7 @@ int NILParser::parse(const char *filePath) {
 				printf("NILParser: S%02u vertex overflow: nv=%u, off=0x%zx\n", si, s.num_verts, off);
 				return 0;
 			}
+
 			s.vertex_data = (uint8_t *)malloc(vsz);
 			memcpy(s.vertex_data, data + off, vsz);
 			off += vsz;
@@ -214,13 +217,14 @@ int NILParser::parse(const char *filePath) {
 					printf("NILParser: S%02u TBN overflow: nv=%u, off=0x%zx\n", si, s.num_verts, off);
 					return 0;
 				}
+
 				s.tbn_data = (uint8_t *)malloc(vsz);
 				memcpy(s.tbn_data, data + off, vsz);
 				off += vsz;
 			}
 		}
 
-		// lightmap patches (has_geo>=2 only)
+		// Legacy fields for the secondary vertex pool (has_geo>=2 only).
 		s.lm_flag		 = 0;
 		s.lm_patch_count = 0;
 		if(s.has_geo >= 2) {
@@ -228,7 +232,7 @@ int NILParser::parse(const char *filePath) {
 			off += 1;
 			s.lm_patch_count = RU32(data, off);
 			off += 4;
-			off += (size_t)s.lm_patch_count * 72; // skip patch data
+			off += (size_t)s.lm_patch_count * 72; // Primary and TBN streams.
 		}
 
 		// num_groups(2) - always present
@@ -283,6 +287,7 @@ int NILParser::parse(const char *filePath) {
 					printf("NILParser: S%02u index overflow: ni=%u, off=0x%zx\n", si, s.num_indices, off);
 					return 0;
 				}
+
 				s.indices = (uint16_t *)malloc(s.num_indices * sizeof(uint16_t));
 				for(uint32_t ii = 0; ii < s.num_indices; ii++) {
 					s.indices[ii] = RU16(data, off);
@@ -353,6 +358,7 @@ int NILParser::parse(const char *filePath) {
 	for(uint32_t i = 0; i < lvl.num_shaders; i++) {
 		memcpy(lvl.material_names[i], lvl.shader_names[i], 33);
 	}
+
 	// level_bounds from first sector center
 	if(lvl.num_sectors > 0) {
 		lvl.level_bounds[0] = lvl.sectors[0].center[0];
@@ -364,24 +370,10 @@ int NILParser::parse(const char *filePath) {
 		   lvl.num_sectors);
 	printf("NILParser: %u verts, %u indices, %u groups\n", lvl.total_verts, lvl.total_indices, lvl.total_groups);
 
-	// post-sector data: collision mesh + BSP/lightmap atlas (not fully decoded)
-	size_t postOff	= off;
-	size_t postSize = file_size - off;
+	// Native Havok/sector mappings are decoded separately by NILCollision.
+	const size_t postSize = file_size - off;
 	printf("NILParser: sector data ends at 0x%zx\n", off);
-	if(postSize >= 32) {
-		float aabbMin[3], aabbMax[3];
-		for(int i = 0; i < 3; i++) aabbMin[i] = RF32(data, off + 4 + i * 4);
-		for(int i = 0; i < 3; i++) aabbMax[i] = RF32(data, off + 16 + i * 4);
-		uint8_t collVertCount = data[off + 31];
-		size_t collDataSize	  = 32 + (size_t)collVertCount * 12 + 2;
-		printf("NILParser: post-sector: %zu bytes (%.1f%% of file)\n", postSize, 100.0 * postSize / file_size);
-		printf("NILParser:   AABB (%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f)\n", aabbMin[0], aabbMin[1], aabbMin[2], aabbMax[0],
-			   aabbMax[1], aabbMax[2]);
-		printf("NILParser:   collision mesh: %u verts, %zu bytes\n", collVertCount, collDataSize);
-		printf("NILParser:   BSP/lightmap atlas: ~%zu bytes (not parsed)\n", postSize - collDataSize);
-	} else {
-		printf("NILParser: post-sector: %zu bytes (not parsed)\n", postSize);
-	}
+	printf("NILParser: post-sector: %zu bytes (native framing requires NILCollision)\n", postSize);
 
 	return 1;
 }
@@ -389,6 +381,5 @@ int NILParser::parse(const char *filePath) {
 /*
  */
 int NILParser::serialize(const char *filePath) const {
-
 	return FileUtils::writeBinaryFile(filePath, lvl.raw_data, lvl.raw_data_size);
 }

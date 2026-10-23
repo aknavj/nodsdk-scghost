@@ -10,6 +10,7 @@ set(PARSER_SOURCES
     NMSParser.cpp
     TerrainParser.cpp
     NILParser.cpp
+    NILCollision.cpp
     NLFXParser.cpp
     NPDParser.cpp
     NSAParser.cpp

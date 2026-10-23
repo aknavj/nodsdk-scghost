@@ -36,7 +36,7 @@ class NILParser : public IAssetParser {
 		static const uint32_t MAX_GROUPS  = 512;
 
 		/*
-		*/
+		 */
 		// 47 bytes per group (fixed size)
 		struct SurfaceGroup {
 			uint32_t shader_idx; // +0
@@ -53,7 +53,7 @@ class NILParser : public IAssetParser {
 		};
 
 		/*
-		*/
+		 */
 		struct Thing {
 			float position[3];
 			uint32_t field1;
@@ -62,13 +62,14 @@ class NILParser : public IAssetParser {
 		};
 
 		/*
-		*/
+		 */
 		struct SurfThing {
+			// Legacy name: native tRenderLight static-light record, not geometry.
 			uint8_t data[72];
 		};
 
 		/*
-		*/
+		 */
 		struct Sector {
 			uint32_t flags;
 			float center[3];
@@ -81,8 +82,8 @@ class NILParser : public IAssetParser {
 			uint8_t *vertex_data; // stride 36
 			uint8_t *tbn_data; // stride 36, only when vert_type==1
 
-			uint8_t lm_flag; // lightmap flag (has_geo>=2 only)
-			uint32_t lm_patch_count; // lightmap patch count
+			uint8_t lm_flag; // Legacy name: secondary vertex-pool type, not a lightmap flag
+			uint32_t lm_patch_count; // Legacy name: secondary vertex count
 
 			uint16_t num_groups;
 			SurfaceGroup *groups;
@@ -104,7 +105,7 @@ class NILParser : public IAssetParser {
 		};
 
 		/*
-		*/
+		 */
 		struct LevelData {
 			uint32_t magic;
 			uint32_t version;

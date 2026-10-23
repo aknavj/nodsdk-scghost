@@ -32,14 +32,21 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 class NPDParser : public IAssetParser {
 
 	public:
+	
 		/*
 		 */
 		struct PlacementRecord {
 			uint16_t entity_id;
 			glm::vec3 position;
 			uint16_t flags;
-			uint32_t color;
-			uint8_t extra[6];
+			uint32_t color; // Legacy raw packed bytes 16..19, not a color.
+			uint8_t extra[6]; // Legacy raw packed bytes 20..25.
+			uint8_t component() const { return uint8_t(color); }
+			uint16_t associationA() const { return uint16_t(color >> 8); }
+			uint16_t associationB() const { return uint16_t((color >> 24) | (uint16_t(extra[0]) << 8)); }
+			uint16_t sector() const { return uint16_t(extra[1] | (uint16_t(extra[2]) << 8)); }
+			uint16_t firstOutgoing() const { return uint16_t(extra[3] | (uint16_t(extra[4]) << 8)); }
+			uint8_t outgoingCount() const { return extra[5]; }
 		};
 
 		/*
@@ -52,7 +59,8 @@ class NPDParser : public IAssetParser {
 			size_t trailer_size;
 			size_t file_size;
 			struct LinkRecord {
-				uint16_t from, to, cost;
+				uint16_t from, to, cost; // cost is the legacy name for native link flags.
+				uint16_t flags() const { return cost; }
 			};
 			LinkRecord *links; // decoded view; serialize preserves the original trailer
 			size_t link_count;
