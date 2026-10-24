@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "app/ViewerApp.h"
 #include "app/BrowserView.h"
+#include "tools/common/tool_help.h"
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -69,7 +70,7 @@ int ViewerApp::run(int argc, char **argv) {
 	glfwWindowHint(GLFW_OPENGL_PROFILE,        GLFW_OPENGL_CORE_PROFILE);
 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 
-	GLFWwindow *window = glfwCreateWindow(1600, 900, "SCG Asset Browser", nullptr, nullptr);
+	GLFWwindow *window = glfwCreateWindow(1600, 900, NOD_TOOLS_WINDOW_TITLE("NODAssetViewer"), nullptr, nullptr);
 	if(!window) {
 		std::fprintf(stderr, "Failed to create GLFW window\n");
 		glfwTerminate();

@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "world_lighting.h"
 #include "scene_bridge.h"
 #include "tool_cli.h"
+#include "tool_help.h"
 #include "../editors/workspace.h"
 
 #include <algorithm>
@@ -52,12 +53,25 @@ int failure(const std::string &message) {
 
 /*
  */
-void usage() {
-	std::cout << "MAPtoNIL --world-only --workspace DIR --asset-root DIR input.map output.nil\n"
-				 "--physics-bounds X0 Y0 Z0 X1 Y1 Z1\n"
-				 "--lighting auto|on|off --light-spacing N --light-samples 1|4\n"
-				 "--light-shadows on|off --light-phong DEG\n"
-				 "--sun-light R G B I DX DY DZ --ambient-light R G B I\n";
+void usage(FILE *output) {
+	nod_tools_print_help(output, "MAPtoNIL",
+		"--world-only : Required; compile world geometry without point-entity placements.\n"
+		"--workspace DIR : Existing authoring workspace containing the output.\n"
+		"--asset-root DIR : Read-only original asset directory; output must be outside it.\n"
+		"--physics-bounds X0 Y0 Z0 X1 Y1 Z1 : Override generated physics bounds.\n"
+		"--lighting auto|on|off : Select the light-baking mode.\n"
+		"--light-spacing N : Set light sample spacing in world units.\n"
+		"--light-samples 1|4 : Set the number of samples per lightmap texel.\n"
+		"--light-shadows on|off : Enable or disable baked shadows.\n"
+		"--light-phong DEG : Set the smoothing angle in degrees.\n"
+		"--sun-light R G B I DX DY DZ : Set sunlight color, intensity, and direction.\n"
+		"--ambient-light R G B I : Set ambient light color and intensity.\n"
+		"--help : Show help.\n"
+		"-- : End options.\n"
+		"input.map : Source MAP world brushes.\n"
+		"output.nil : Destination NIL v35 level inside the workspace.\n",
+		"MAPtoNIL --world-only --workspace workspace --asset-root assets input.map workspace/output.nil\n"
+		"MAPtoNIL --world-only --workspace workspace --asset-root assets --lighting on --light-samples 4 input.map workspace/output.nil\n");
 }
 
 } // namespace
@@ -71,9 +85,9 @@ int main(int argc, char **argv) {
 		return failure(error);
 	}
 
-	if(argc == 2 && std::string(argv[1]) == "--help") {
-		usage();
-		return 0;
+	if(argc < 2 || (argc == 2 && std::string(argv[1]) == "--help")) {
+		usage(argc < 2 ? stderr : stdout);
+		return argc < 2 ? 1 : 0;
 	}
 
 	fs::path workspace;

@@ -27,7 +27,7 @@ if(WIN32 AND NODSDK_ENABLE_AUDIO)
 endif()
 
 # ─── Asset Browser executable ────────────────────────────────────────
-add_executable(nodsdk-viewer
+add_executable(NODAssetViewer
     main.cpp
 
     AudioPlayer.cpp
@@ -61,21 +61,22 @@ add_executable(nodsdk-viewer
     app/ViewerApp.cpp
 )
 
-target_include_directories(nodsdk-viewer PRIVATE
+target_include_directories(NODAssetViewer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/src
 )
 
 if(WIN32)
-    target_include_directories(nodsdk-viewer PRIVATE ${DIRENT_INCLUDE_DIR})
-    target_compile_definitions(nodsdk-viewer PRIVATE NOMINMAX)
+    target_include_directories(NODAssetViewer PRIVATE ${DIRENT_INCLUDE_DIR})
+    target_compile_definitions(NODAssetViewer PRIVATE NOMINMAX)
 endif()
 if(NOT NODSDK_ENABLE_AUDIO)
-    target_compile_definitions(nodsdk-viewer PRIVATE NODSDK_AUDIO_DISABLED)
+    target_compile_definitions(NODAssetViewer PRIVATE NODSDK_AUDIO_DISABLED)
     message(STATUS "Viewer audio playback disabled; audio inspection remains available")
 endif()
 
-target_link_libraries(nodsdk-viewer PRIVATE
+target_link_libraries(NODAssetViewer PRIVATE
+    nodsdk_app_icon
     asset_parsers
     imgui_browser
     OpenGL::GL
@@ -83,9 +84,9 @@ target_link_libraries(nodsdk-viewer PRIVATE
 )
 
 if(GLEW_FOUND)
-    target_link_libraries(nodsdk-viewer PRIVATE GLEW::GLEW)
+    target_link_libraries(NODAssetViewer PRIVATE GLEW::GLEW)
 else()
-    target_link_libraries(nodsdk-viewer PRIVATE GLEW)
+    target_link_libraries(NODAssetViewer PRIVATE GLEW)
 endif()
 
 if(BUILD_TESTING AND NOT NODSDK_ENABLE_AUDIO)

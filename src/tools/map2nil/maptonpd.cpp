@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "path_graph.h"
 #include "tool_cli.h"
+#include "tool_help.h"
 #include "../editors/workspace.h"
 #include <iostream>
 
@@ -52,10 +53,16 @@ int main(int argc, char **argv) {
 		return failure(error);
 	}
 
-	if(argc == 2 && std::string(argv[1]) == "--help") {
-		std::cout << "MAPtoNPD --workspace DIR --asset-root DIR input.map output.npd\n"
-					 "Manual world-space waypoints and directed normal links; sector 0.\n";
-		return 0;
+	if(argc < 2 || (argc == 2 && std::string(argv[1]) == "--help")) {
+		nod_tools_print_help(argc < 2 ? stderr : stdout, "MAPtoNPD",
+			"--workspace DIR : Existing authoring workspace containing the output.\n"
+			"--asset-root DIR : Read-only original asset directory; output must be outside it.\n"
+			"--help : Show help.\n"
+			"-- : End options.\n"
+			"input.map : Manual world-space waypoints with directed normal links.\n"
+			"output.npd : Destination NPD path graph in sector 0, inside the workspace.\n",
+			"MAPtoNPD --workspace workspace --asset-root assets input.map workspace/output.npd\n");
+		return argc < 2 ? 1 : 0;
 	}
 
 	fs::path workspace;

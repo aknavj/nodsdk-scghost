@@ -1,5 +1,9 @@
 # build output
 build/
+build-out/
+maps-out/
+.build/
+.deps/
 cmake/
 assets/
 

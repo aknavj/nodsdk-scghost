@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "nmb_compiler.h"
 #include "tool_cli.h"
+#include "tool_help.h"
 #include "../editors/workspace.h"
 
 #include <algorithm>
@@ -46,10 +47,17 @@ int failure(const std::string &message) {
 
 /*
  */
-void usage() {
-	std::cout << "NODtoNMB --workspace DIR --asset-root DIR output.nmb [model.nod|model.noc ...]\n"
-				 "  --model NAME FILE  Set member name.\n"
-				 "  --                 End options.\n";
+void usage(FILE *output) {
+	nod_tools_print_help(output, "NODtoNMB",
+		"--workspace DIR : Existing authoring workspace containing the output.\n"
+		"--asset-root DIR : Read-only original asset directory; output must be outside it.\n"
+		"--model NAME FILE : Add a NOD/NOC member with an explicit bundle name; repeatable.\n"
+		"--help : Show help.\n"
+		"-- : End options.\n"
+		"output.nmb : Destination bundle inside the workspace.\n"
+		"model.nod|model.noc : Optional input models; up to 256 members in total.\n",
+		"NODtoNMB --workspace workspace --asset-root assets workspace/output.nmb model.nod\n"
+		"NODtoNMB --workspace workspace --asset-root assets --model Crate.nod model.nod workspace/output.nmb\n");
 }
 
 } // namespace
@@ -63,9 +71,9 @@ int main(int argc, char **argv) {
 		return failure(error);
 	}
 
-	if(argc == 2 && std::string(argv[1]) == "--help") {
-		usage();
-		return 0;
+	if(argc < 2 || (argc == 2 && std::string(argv[1]) == "--help")) {
+		usage(argc < 2 ? stderr : stdout);
+		return argc < 2 ? 1 : 0;
 	}
 
 	fs::path workspace;

@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(nodsdk-scghost C CXX)
+if(WIN32)
+    enable_language(RC)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,6 +16,7 @@ option(NODSDK_BUILD_VIEWER "Build the OpenGL asset viewer" ON)
 option(NODSDK_BUILD_PARSERS "Build the C++ parser library explicitly (also required by NODscene)" ON)
 
 include(CTest)
+add_subdirectory(res)
 if(NODSDK_BUILD_PARSERS OR NODSDK_BUILD_VIEWER)
     add_subdirectory(src/parsers)
 endif()

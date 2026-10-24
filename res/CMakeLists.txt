@@ -1,0 +1,6 @@
+add_library(nodsdk_app_icon INTERFACE)
+if(WIN32)
+    target_sources(nodsdk_app_icon INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/windows_icon.rc)
+    target_include_directories(nodsdk_app_icon INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(nodsdk_app_icon INTERFACE NODSDK_RESOURCE_NAME="$<TARGET_PROPERTY:NAME>")
+endif()

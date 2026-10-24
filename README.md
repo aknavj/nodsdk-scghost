@@ -1,202 +1,138 @@
-# OpenNOD SDK — SC:Ghost Reversed
+# OpenNOD SDK - SC:Ghost Reversed
 
-An ongoing reverse-engineering effort focused on Nihilistic Software's NOD engine, the technology that powered StarCraft: Ghost during its development between 2001–2004. Based on an early Xbox prototype build.
+Tools and C++17 parsers for Nihilistic Software's NOD engine, based on an early
+Xbox prototype of StarCraft: Ghost. An educational reverse-engineering and
+preservation project.
 
-![NIL level — Mar Sara](imgs/scg_img0.png)
+![NIL level - Mar Sara](imgs/scg_img0.png)
 
 | | | |
 |---|---|---|
-| ![Asset browser — NIL level](imgs/scg_img1.png) | ![NAD animation inspector](imgs/scg_img2.png) | ![DDS texture preview](imgs/scg_img3.png) |
+| ![Asset browser - NIL level](imgs/scg_img1.png) | ![NAD animation inspector](imgs/scg_img2.png) | ![DDS texture preview](imgs/scg_img3.png) |
 | ![NSD scene data](imgs/scg_img4.png) | ![XWB wave bank audio](imgs/scg_img5.png) | |
 
-## What's inside
+## Included applications
 
-| Component | Description |
+| Application | Purpose |
 |---|---|
-| `src/parsers/` | C++17 static library — parsers for all major NOD asset formats |
-| `src/viewer/` | OpenGL asset browser with ImGui UI |
-| `src/tools/` | NILtoMAP, world-only MAPtoNIL, MAPtoNSD placements, NODscene bridge and NODtoNMB bundles |
-| `plugin/bpy-nodsdk-scghost/` | Blender 4.x import plugin (NOD, NMB, NIL, NAD) |
+| `NODAssetViewer` | Browse models, levels, textures, animations, scenes, and audio assets |
+| `NSDEditor`, `NOTEditor` | Inspect and edit native scene and template documents |
+| `NODscene` | Import/export scene data, apply sidecar-backed edits, and generate previews or entity definitions |
+| `NILtoMAP` | Convert NIL render geometry to editable Quake III MAP brushes used by [nodsdk-radiant](https://github.com/aknavj/nodsdk-radiant) |
+| `MAPtoNIL` | Compile MAP world geometry and collision; excludes point-entity placements |
+| `MAPtoNSD` | Compile native template placements into NSD scenes |
+| `MAPtoNPD` | Compile manual waypoints and directed links into NPD path data |
+| `NODtoNMB` | Bundle NOD/NOC models into NMB files |
+| `NODTemplates` | Query template/instance metadata and perform validated shared-property edits |
 
-### Parsed formats
-
-| Extension | Content |
-|---|---|
-| `.nod` | Rigid / skinned mesh model |
-| `.nmb` | Multi-body compound mesh bundle |
-| `.nil` | Indoor level geometry (sectors + props) |
-| `.nad` | Skeletal animation clip |
-| `.nak` | Camera keyframe animation |
-| `.nsd` | Scene description (entity placement) |
-| `.nce` / `.ncs` | Cutscene data |
-| `.nco` | Conversation / subtitle data |
-| `.nls` / `.nlt` | Localised string tables |
-| `.nfx` / `.nlfx` | Particle / effect descriptors |
-| `.nui` | UI layout |
-| `.not` | Object template definitions |
-| `.npd` | Patrol / path data |
-| `.noc` | Occlusion / collision mesh |
-| `.nms` | Material / surface definition |
-| `.nsa` | Sound archive manifest |
-| `.nnb` | NavMesh baked data |
-| `.xwb` / `.xsb` | Xbox wave bank / sound bank (ADPCM) |
-| `.xpr` | Xbox packed resource (textures) |
-| `.dds` | DirectDraw Surface texture |
-| `.tga` | Targa texture |
-
----
-
-## Dependencies
-
-### Viewer (Linux / macOS)
-
-| Package | Purpose |
-|---|---|
-| CMake ≥ 3.16 | build system |
-| GCC / Clang (C++17) | compiler |
-| OpenGL | rendering |
-| GLFW 3.3+ | window + input |
-| GLEW | GL extension loader |
-| GLM | math library |
-
-Install on Ubuntu / Debian:
-
-```bash
-sudo apt install cmake g++ libglfw3-dev libglew-dev libglm-dev
-```
-
-Install on Arch:
-
-```bash
-sudo pacman -S cmake glfw glew glm
-```
-
-### Blender plugin
-
-Blender 4.0 or later. No additional Python packages required.
-
----
+The repository also includes the [parser library](src/parsers/), a
+[Blender plugin](plugin/bpy-nodsdk-scghost/), and
+[detailed tool documentation](src/tools/README.md).
 
 ## Build
 
-Initialize the pinned Dear ImGui dependency first:
+Requires Git, CMake 3.16 or later, a C99/C++17 compiler, and Bash.
+
+### Windows
+
+Install **Git for Windows**, **CMake**, and **Visual Studio 2022** with the
+**Desktop development with C++** workload and a Windows SDK. Run the scripts
+from Git Bash.
+
+The build automatically sets up vcpkg in `.deps/vcpkg` and restores the
+[manifest dependencies](vcpkg.json). Initial setup requires network access.
+Windows builds use static dependencies and the static MSVC runtime, so no
+additional DLLs need to accompany the executables. Each executable includes
+the shared icon and Windows version metadata.
+
+To reuse an existing vcpkg installation:
+
+```bash
+VCPKG_ROOT="C:/dev/vcpkg" bash build.sh
+```
+
+`CMAKE_TOOLCHAIN_FILE` can override the toolchain; custom Windows toolchains
+must provide static dependencies. Clean before switching toolchains.
+
+### Linux / macOS
+
+Install OpenGL development files, GLFW 3.3+, GLEW, and GLM.
+For Ubuntu / Debian:
+
+```bash
+sudo apt install git cmake g++ libgl1-mesa-dev libglfw3-dev libglew-dev libglm-dev
+```
+
+### Build all applications
+
+From the repository root:
 
 ```bash
 git submodule update --init --recursive
+bash build.sh
 ```
+
+[build.sh](build.sh) builds all ten applications in Release:
+
+- `build-out/` contains only the application executables.
+- `.build/` contains CMake files, libraries, installed dependencies, and intermediates.
+- `.deps/vcpkg/` holds the reusable Windows package-manager checkout.
+
+Run `bash clean.sh` to remove `.build/` and `build-out/` completely.
+[clean.sh](clean.sh) preserves `.deps/vcpkg/` and leaves other directories untouched.
+Both scripts work from any working directory and accept `--help`.
+
+## Usage
+
+After building, launch the viewer with the root of the extracted game asset
+tree (the directory containing folders such as `models/` and `textures/`):
 
 ```bash
-cmake -B build/cmake
-cmake --build build/cmake --target nodsdk-viewer -j$(nproc)
+# Windows / Git Bash
+./build-out/NODAssetViewer.exe "C:/path/to/assets"
+
+# Linux / macOS
+./build-out/NODAssetViewer /path/to/assets
 ```
 
-## Running the viewer
+Browse assets by type and select an entry to preview it. Audio playback uses
+`aplay` on supported POSIX builds; Windows audio playback is disabled.
+
+Every application provides command-line help:
 
 ```bash
-cd cmake
-./nodsdk-viewer <assets-directory>
+./build-out/NODscene.exe --help
+./build-out/MAPtoNIL.exe --help
 ```
 
-`<assets-directory>` should be the root of the extracted game asset tree (the directory that contains subdirectories like `models/`, `textures/`, etc.).
+On Linux/macOS, omit `.exe`. Tools that require inputs also print help when
+launched without arguments. The editors can open their GUI without arguments.
 
-The browser panel on the left lets you browse by asset type. Click any entry to preview it. Supported previews:
-
-- **NOD / NMB** — 3-D mesh with orbital camera, skinning, optional animation playback
-- **NIL** — full level geometry with entity instances
-- **DDS / TGA / XPR** — texture preview
-- **NSD** — entity list with type classification
-- **NAD** — animation clip details
-- **NCE / NCS** — cutscene actor + event list
-- **XWB / XSB** — wave bank audio playback (via `aplay`)
-
----
-
-## NILtoMAP CLI
-
-Convert NIL v35 render geometry into editable Quake III MAP triangle brushes:
-
-```bash
-cmake -S src/tools -B build/niltomap
-cmake --build build/niltomap --config Release
-NILtoMAP --thickness 1 input.nil output.map
-```
-
-## MAPtoNIL CLI
-
-Compile classic MAP world brushes into NIL v35 with generated collision:
-
-```text
-MAPtoNIL --world-only --workspace DIR --asset-root ASSETS input.map output.nil
-```
-
-Physics bounds are computed from the world box with one unit of padding;
-`--physics-bounds MINX MINY MINZ MAXX MAXY MAXZ` is an optional override.
-Output must be inside the workspace and outside
-original assets. Non-world entities are excluded; no NSD/NMB is emitted.
-See [tools usage](src/tools/README.md#maptonil-world-compiler).
-
-## MAPtoNSD CLI
-
-Compile native template point placements into a fresh NSD v11:
-
-```text
-MAPtoNSD --workspace DIR --asset-root ASSETS input.map output.nsd
-```
-
-Supports native types 0/2/7, ordered NOT context and typed instance overrides,
-using sector 0 for the single-sector world. NIL compilation remains separate;
-no automatic NMB/NPD generation or gameplay-spawn proof is implied.
-Output stays inside the workspace and outside original assets.
-See [placement compiler limits and tests](src/tools/README.md#maptonsd-placement-compiler).
+For scene authoring, compiler options, workspace rules, and format limitations,
+see the [tools guide](src/tools/README.md). Compiler outputs must remain inside
+the authoring workspace and outside the original asset tree.
 
 ## Blender plugin
 
-### Install
+Requires Blender 4.0 or later; no additional Python packages are needed.
+Package the plugin:
 
 ```bash
 cd plugin
 zip -rq bpy-nodsdk-scghost.zip bpy-nodsdk-scghost/ -x '*/__pycache__/*'
 ```
 
-In Blender: *Edit → Preferences → Add-ons → Install* → select the zip → enable **OpenNod SDK-scghost**.
+Install the ZIP through Blender's add-on preferences and enable
+**OpenNod SDK-scghost**. The **File > Import** menu provides NOD, NMB, NIL,
+and NAD importers. NAD animation import requires an existing armature.
 
-### Importers
+## Project scope and license
 
-| Menu entry | Format | Notes |
-|---|---|---|
-| File → Import → NOD Model (.nod) | `.nod` | rigid or skinned mesh; creates armature if bones present |
-| File → Import → NMB Bundle (.nmb) | `.nmb` | multi-body compound mesh |
-| File → Import → NIL Level (.nil) | `.nil` | full indoor level; props baked to world space |
-| File → Import → NAD Animation (.nad) | `.nad` | animation clip; requires an active armature in the scene |
+This is not a game remake or a distribution of proprietary game assets.
+It is intended for educational and preservation work, not commercial use.
+Respect the rights of the original authors.
 
----
+Licensed under GNU GPL v3. See individual source files for copyright notices.
 
-## Project goals
-
-- Open, educational reference on early-2000s console engine design
-- Document the NOD engine asset formats completely
-- Respect for original authors (Nihilistic Software, Blizzard Entertainment, Activision)
-
-## Why this matters
-
-StarCraft: Ghost is one of the most iconic cancelled games in Blizzard history. The NOD engine also powered *Vampire: The Masquerade — Redemption*. Studying this prototype gives rare insight into Blizzard's early console strategy and Nihilistic's proprietary technology.
-
-## What This Project Is Not
-
-- This is not a remake or distribution of proprietary game assets.
-- This is not intended for commercial use.
-- All research is for educational and preservation purposes only.
-
----
-
-## AI Disclaimer
-
-This project uses AI-assisted development tools.
-
-Oversight: `Collaborative`
-
-Human and AI co-author decisions; human reviews all output.
-
----
-
-*Licensed under GNU GPL v3. See individual source files for full copyright notices.*
+This project uses AI-assisted development with collaborative human/AI oversight
+and human review of output.

@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "scene_bridge.h"
 #include "tool_cli.h"
+#include "tool_help.h"
 #include "nod_assets.h"
 #include "path_graph.h"
 #include "map_lighting.h"
@@ -507,10 +508,16 @@ int main(int argc, char **argv) {
 		return failure(error);
 	}
 
-	if(argc == 2 && std::string(argv[1]) == "--help") {
-		std::cout << "MAPtoNSD --workspace DIR --asset-root DIR input.map output.nsd\n"
-					 "Native template point placements, types 0/2/7/8, sector 0. No world geometry.\n";
-		return 0;
+	if(argc < 2 || (argc == 2 && std::string(argv[1]) == "--help")) {
+		nod_tools_print_help(argc < 2 ? stderr : stdout, "MAPtoNSD",
+			"--workspace DIR : Existing authoring workspace containing the output.\n"
+			"--asset-root DIR : Read-only original asset directory; output must be outside it.\n"
+			"--help : Show help.\n"
+			"-- : End options.\n"
+			"input.map : Native template point placements, types 0/2/7/8; no world geometry.\n"
+			"output.nsd : Destination NSD v11 scene in sector 0, inside the workspace.\n",
+			"MAPtoNSD --workspace workspace --asset-root assets input.map workspace/output.nsd\n");
+		return argc < 2 ? 1 : 0;
 	}
 
 	fs::path workspace;
