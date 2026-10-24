@@ -57,6 +57,8 @@ class NMBParser : public IAssetParser {
 			size_t vertex_data_size;
 			uint16_t *indices; // flat shared index buffer
 			uint32_t index_count;
+			const uint8_t *vertex_colors; // optional version-2 packed colour stream in raw_data
+			uint32_t color_count;
 
 			char shader_names[MAX_SHADERS_PER_MODEL][33];
 
@@ -91,6 +93,8 @@ class NMBParser : public IAssetParser {
 		~NMBParser() override;
 
 		int parse(const char *filePath) override;
+		int parseBuffer(const uint8_t *data, size_t size);
+		const std::string &getLastError() const { return last_error; }
 		int serialize(const char *filePath) const override;
 
 		const char *getFileType() const override { return "NMB"; }
@@ -105,8 +109,14 @@ class NMBParser : public IAssetParser {
 					return 36;
 				case 2:
 					return 48;
+				case 3:
+					return 68;
+				case 4:
+					return 72;
+				case 5:
+					return 84;
 				default:
-					return 32;
+					return 0;
 			}
 		}
 
@@ -114,6 +124,10 @@ class NMBParser : public IAssetParser {
 
 		uint8_t *raw_data; // kept alive for vertex/index pointers
 		BundleData m;
+		std::string last_error;
+		void clear();
+		int fail(const char *message);
+		int parseOwnedBuffer(uint8_t *data, size_t size);
 };
 
 #endif // __NMBPARSER_H__

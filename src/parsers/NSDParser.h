@@ -25,6 +25,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define __NSDPARSER_H__
 
 #include "AssetParser.h"
+#include "NODProperties.h"
+#include <vector>
+#include <string>
 
 /*
  */
@@ -33,6 +36,7 @@ class NSDParser : public IAssetParser {
 	public:
 		static const uint32_t MAX_ENTITIES	 = 1024;
 		static const uint32_t MAX_TYPE_NAMES = 128;
+		static const uint32_t MAX_TEMPLATE_FILES = 9;
 
 		struct SceneEntity {
 			char type_name[65];
@@ -43,12 +47,23 @@ class NSDParser : public IAssetParser {
 			char model_name[64];  // model reference (from tag4 block, e.g. "door.nod")
 			char script_name[64]; // attached script/effect name (from tag 0xa1 at +140)
 			bool has_transform;	  // true if tag-validated block with position/rotation
-			bool has_model;		  // true if tag4 model name was found
+			bool has_model;		  // valid, nonempty tag4 model reference
+			bool has_model_override; // includes an explicit empty tag4 value
+			bool model_override_valid;
+			bool has_sector;
+			uint32_t sector;
+			char region_class[33];
+			bool has_bounds;
+			float bounds_min[3]; // local-space AABB of referenced inline LOD-0 vertices
+			float bounds_max[3];
+			const char *bounds_status;
 		};
 
 		struct SceneData {
 			uint32_t magic;
+			uint32_t version;
 			uint32_t entity_count;
+			size_t object_data_offset; // immediately after the declared object count
 
 			SceneEntity *entities;
 			uint32_t entity_array_count;
@@ -75,14 +90,26 @@ class NSDParser : public IAssetParser {
 		}
 
 		int parse(const char *filePath) override;
+		// Copies source bytes; parsing again invalidates previous entity/raw-data views.
+		int parseBuffer(const uint8_t *data, size_t size);
+		const char *getLastError() const { return last_error; }
 		int serialize(const char *filePath) const override;
 
 		const char *getFileType() const override { return "NSD"; }
 		const SceneData &getSceneData() const { return sd; }
+		const std::vector<std::string> &getTemplateFiles() const { return template_files; }
+		bool getModifiers(const SceneEntity &entity, std::vector<NODModifier> &out) const;
+		static bool readModifiers(const uint8_t *data, size_t size, const SceneEntity &entity,
+								  std::vector<NODModifier> &out);
 
 	private:
 		SceneData sd;
-		void extract_entity_names(const uint8_t *data, size_t data_size);
+		std::vector<std::string> template_files;
+		const char *last_error = "";
+		void clear();
+		int reject(const char *message);
+		int extract_entity_names(const uint8_t *data, size_t data_size);
+		int extract_region_bounds(SceneEntity &entity, const uint8_t *data);
 		void extract_sky_model(const uint8_t *data, size_t data_size);
 };
 

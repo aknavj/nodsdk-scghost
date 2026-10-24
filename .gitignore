@@ -1,5 +1,9 @@
 # build output
 build/
+build-out/
+maps-out/
+.build/
+.deps/
 cmake/
 assets/
 
@@ -12,6 +16,7 @@ Makefile
 *.cmake
 !CMakeLists.txt
 !src/**/CMakeLists.txt
+!src/imgui_backend.cmake
 
 # compiled objects
 *.o
@@ -20,6 +25,7 @@ Makefile
 *.dylib
 *.dll
 *.exe
+*.nodsrc
 
 # editor / IDE
 .vscode/

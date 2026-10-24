@@ -30,13 +30,14 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "parsers/NMBParser.h"
 #include "parsers/NODParser.h"
 #include "parsers/NSDParser.h"
-#include "parsers/NSDEntityResolver.h"
+#include "parsers/NOTDatabase.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
 #include <dirent.h>
 #include <unordered_map>
@@ -53,10 +54,11 @@ namespace {
 /*
  */
 struct InstanceDesc {
-	const char *modelName; // points into NSD entity table
+	std::string modelName;
 	float pos[3];
 	float rot[3];
-	bool  isOffset;
+	float scale = 1;
+	float offset[3] = {};
 };
 
 /*
@@ -106,25 +108,55 @@ void bakeNilEntities(const std::string &nilPath, const std::string &assetDir, vi
 	if(!sd.entities || sd.entity_array_count == 0) return;
 
 	std::printf("[EntityInstancer] NSD: %u entity defs from %s\n", sd.entity_array_count, nsdPath.substr(nsdPath.rfind('/') + 1).c_str());
+	NOTDatabase templates;
+	std::string template_error;
+	if(!templates.load(std::filesystem::u8path(assetDir), nsdFull.getTemplateFiles(), template_error)) {
+		std::fprintf(stderr, "[EntityInstancer] %s\n", template_error.c_str());
+		return;
+	}
+	for(const auto &warning : templates.warnings())
+		std::fprintf(stderr, "[EntityInstancer] %s\n", warning.c_str());
 
 	std::vector<InstanceDesc> instances;
 	for(uint32_t i = 0; i < sd.entity_array_count; ++i) {
 		const auto &se = sd.entities[i];
 		if(se.type_name[0] == '\0') continue;
-		if(NSDEntityResolver::isRegionType(se.type_name) ||
-		   NSDEntityResolver::isSkipType(se.type_name)) continue;
-
-		const char *resolved = NSDEntityResolver::resolveModelFile(se.type_name);
-		const char *cand = nullptr;
-		if(resolved && resolved[0] != '\0')      cand = resolved;
-		else if(se.has_model && se.model_name[0]) cand = se.model_name;
-		else { cand = se.type_name; }
+		std::string model;
+		NOTDatabase::ModelPreview preview;
+		std::vector<NODModifier> modifiers;
+		const bool counted = nsdFull.getModifiers(se, modifiers);
+		if(!counted)
+			std::fprintf(stderr, "[EntityInstancer] %s: unverified modifier array; using legacy placement preview selection\n", se.type_name);
+		if(!counted && se.has_model_override) {
+			if(!se.model_override_valid) {
+				std::fprintf(stderr, "[EntityInstancer] Invalid model override: %s\n", se.type_name);
+				continue;
+			}
+			model = se.model_name;
+		} else {
+			std::vector<NOTParser::ResolvedProperty> properties;
+			std::string error;
+			const auto status = counted
+				? templates.resolveModifiers(modifiers.data(), modifiers.size(), properties, error)
+				: templates.resolveModifiers(se.type_name, properties, error);
+			if(status != NOTParser::ResolveStatus::ok) {
+				std::fprintf(stderr, "[EntityInstancer] %s: %s\n", se.type_name, error.c_str());
+				continue;
+			}
+			if(!NOTDatabase::modelPreview(properties, preview, error)) {
+				std::fprintf(stderr, "[EntityInstancer] %s: %s\n", se.type_name, error.c_str());
+				continue;
+			}
+			model = preview.model;
+		}
+		if(model.empty() || preview.scale == 0) continue;
 
 		InstanceDesc d{};
-		d.modelName = cand;
+		d.modelName = std::move(model);
 		d.pos[0] = se.position[0]; d.pos[1] = se.position[1]; d.pos[2] = se.position[2];
 		d.rot[0] = se.rotation[0]; d.rot[1] = se.rotation[1]; d.rot[2] = se.rotation[2];
-		d.isOffset = (std::strstr(se.type_name, "_offset") != nullptr);
+		d.scale = preview.scale;
+		std::copy_n(preview.offset, 3, d.offset);
 		instances.push_back(d);
 	}
 
@@ -283,51 +315,14 @@ void bakeNilEntities(const std::string &nilPath, const std::string &assetDir, vi
 		for(auto &m : loaded) if(m.name_lower == mn && m.loaded) { lm = &m; break; }
 		if(!lm) continue;
 
-		const glm::vec3 gl_pos(ref.pos[0], ref.pos[2], -ref.pos[1]);
+		const glm::vec3 gl_pos(ref.pos[0] + ref.offset[0], ref.pos[2] + ref.offset[2], -ref.pos[1] - ref.offset[1]);
 		const glm::quat qYaw = glm::angleAxis(glm::radians(ref.rot[1]), glm::vec3(0, 1, 0));
 		const glm::quat qPitch = glm::angleAxis(glm::radians(ref.rot[0]), glm::vec3(1, 0, 0));
 		const glm::quat qRoll = glm::angleAxis(glm::radians(ref.rot[2]), glm::vec3(0, 0, 1));
 		const glm::quat gl_rot = coordQ * qYaw * qPitch * qRoll;
-		const glm::mat3 rot3 = glm::mat3(glm::mat4_cast(gl_rot));
-
-		glm::mat4 model_mat;
-		if(ref.isOffset) {
-			glm::vec3 vmin(1e30f), vmax(-1e30f);
-			auto scanVerts = [&](const uint8_t *vdata, uint32_t vsc, const NODParser::VertexSet *vsets) {
-				for(uint32_t s = 0; s < vsc; ++s) {
-					const auto &vs = vsets[s];
-					if(vs.count == 0 || vs.base_stride < 12) continue;
-					const uint8_t *blob = vdata + vs.data_offset;
-					for(uint32_t vi = 0; vi < vs.count; ++vi) {
-						float px, py, pz;
-						std::memcpy(&px, blob + vi*vs.base_stride + 0, 4);
-						std::memcpy(&py, blob + vi*vs.base_stride + 4, 4);
-						std::memcpy(&pz, blob + vi*vs.base_stride + 8, 4);
-						vmin = glm::min(vmin, glm::vec3(px, py, pz));
-						vmax = glm::max(vmax, glm::vec3(px, py, pz));
-					}
-				}
-			};
-			if(lm->isNmb) {
-				const auto &bd = lm->nmb.getBundleData();
-				for(uint32_t mi = 0; mi < bd.model_count && mi < NMBParser::MAX_MODELS; ++mi) {
-					const auto &entry = bd.models[mi];
-					if(entry.vertex_data && entry.vertex_set_count > 0) {
-						scanVerts(entry.vertex_data, entry.vertex_set_count, entry.vertex_sets);
-					}
-				}
-			} else {
-				const auto &md = lm->nod.getModelData();
-				if(md.vertex_data) scanVerts(md.vertex_data, md.vertex_set_count, md.vertex_sets);
-			}
-			glm::vec3 d3dCenter = (vmin + vmax) * 0.5f;
-			d3dCenter.z = 0.0f;
-			model_mat = glm::translate(glm::mat4(1.0f), gl_pos)
-			          * glm::mat4_cast(gl_rot)
-			          * glm::translate(glm::mat4(1.0f), -d3dCenter);
-		} else {
-			model_mat = glm::translate(glm::mat4(1.0f), gl_pos) * glm::mat4_cast(gl_rot);
-		}
+		const glm::mat3 rot3 = glm::mat3(glm::mat4_cast(gl_rot)) * (ref.scale < 0 ? -1.0f : 1.0f);
+		const glm::mat4 model_mat = glm::translate(glm::mat4(1.0f), gl_pos) * glm::mat4_cast(gl_rot) *
+			glm::scale(glm::mat4(1.0f), glm::vec3(ref.scale));
 
 		if(lm->isNmb) {
 			const auto &bd = lm->nmb.getBundleData();

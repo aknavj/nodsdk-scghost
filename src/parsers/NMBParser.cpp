@@ -29,21 +29,36 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 /*
  */
 NMBParser::~NMBParser() {
+	clear();
+}
 
+void NMBParser::clear() {
 	// free per-entry allocated data
-	for(uint32_t i = 0; i < m.parsed_count; ++i) {
+	for(uint32_t i = 0; i < MAX_MODELS; ++i) {
+		free(m.models[i].vertex_data);
+		free(m.models[i].indices);
 		free(m.models[i].bones);
 		free(m.models[i].mesh_groups);
 	}
 	free(raw_data);
+	raw_data = nullptr;
+	memset(&m, 0, sizeof(m));
+}
+
+int NMBParser::fail(const char *message) {
+	last_error = message;
+	clear();
+	return 0;
 }
 
 /*
  */
 int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, ModelEntry *e, size_t *nextOffset) {
+	last_error = "Truncated NMB entry at byte " + std::to_string(off);
 	if(off + 66 > file_size) return 0;
 
 	e->shader_count		= data[off + 0];
+	if(e->shader_count > MAX_SHADERS_PER_MODEL) return 0;
 	e->bone_count		= data[off + 1];
 	e->mesh_group_count = data[off + 2];
 	memcpy(&e->marker_count, data + off + 3, 2);
@@ -52,11 +67,14 @@ int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, Mo
 	// 32-byte name field at off+5
 	memset(e->name, 0, sizeof(e->name));
 	memcpy(e->name, data + off + 5, 32);
-	e->name[31] = '\0';
+	e->name[32] = '\0';
 
 	// vertex_set_count (1B) at off+37
 	e->vertex_set_count = data[off + 37];
-	if(e->vertex_set_count == 0 || e->vertex_set_count > NODParser::MAX_VERTEX_SETS) return 0;
+	if(e->vertex_set_count == 0 || e->vertex_set_count > NODParser::MAX_VERTEX_SETS) {
+		last_error = "Unsupported NMB vertex set count at byte " + std::to_string(off);
+		return 0;
+	}
 
 	// flags (4B) at off+38
 	memcpy(&e->flags, data + off + 38, 4);
@@ -81,7 +99,10 @@ int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, Mo
 		uint8_t vtype = data[pos];
 		uint32_t vcount;
 		memcpy(&vcount, data + pos + 1, 4);
-		if(vtype > 2 || vcount > 500000) return 0;
+		if(vtype > 5 || vcount > 500000) {
+			last_error = "Unsupported NMB vertex type or count at byte " + std::to_string(pos);
+			return 0;
+		}
 
 		uint32_t stride = type_to_stride(vtype);
 		vsDescOffs[i]	= pos;
@@ -90,6 +111,7 @@ int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, Mo
 
 		e->vertex_sets[i].type		  = vtype;
 		e->vertex_sets[i].stride	  = stride;
+		e->vertex_sets[i].base_stride = vtype >= 3 ? type_to_stride(vtype - 3) : stride;
 		e->vertex_sets[i].count		  = vcount;
 		e->vertex_sets[i].data_offset = (uint32_t)totalVertBytes;
 
@@ -188,7 +210,8 @@ int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, Mo
 		e->mesh_groups = (NODParser::MeshGroup *)calloc(e->mesh_group_count, sizeof(NODParser::MeshGroup));
 		if(!e->mesh_groups) goto fail;
 
-		uint32_t indexOffsets[NODParser::MAX_VERTEX_SETS] = {0};
+		// Index ranges are shared across vertex sets; vertex bases are per-set.
+		uint32_t indexOffset = 0;
 		uint32_t baseVerts[NODParser::MAX_VERTEX_SETS]	  = {0};
 
 		for(uint8_t g = 0; g < e->mesh_group_count; ++g) {
@@ -196,10 +219,17 @@ int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, Mo
 			NODParser::MeshGroup *mg = &e->mesh_groups[g];
 
 			memcpy(&mg->shader_index, data + pos, 4);
+			if(mg->shader_index >= e->shader_count) {
+				last_error = "Invalid NMB mesh shader at byte " + std::to_string(pos);
+				goto fail;
+			}
 			pos += 4;
 
 			mg->vertex_set_index = data[pos];
-			if(mg->vertex_set_index >= e->vertex_set_count) mg->vertex_set_index = 0;
+			if(mg->vertex_set_index >= e->vertex_set_count) {
+				last_error = "Invalid NMB mesh vertex set at byte " + std::to_string(pos);
+				goto fail;
+			}
 			pos += 1;
 
 			// 4 LODs (6 bytes each: strip_count:2B + list_count:2B + num_verts:2B)
@@ -211,12 +241,16 @@ int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, Mo
 				pos += 6;
 
 				if(strip_count > 0 || list_count > 0 || lod == 0) {
-					mg->lods[lod].strip_start = indexOffsets[mg->vertex_set_index];
+					mg->lods[lod].strip_start = indexOffset;
 					mg->lods[lod].strip_count = strip_count;
-					mg->lods[lod].list_start  = indexOffsets[mg->vertex_set_index] + strip_count;
+					mg->lods[lod].list_start  = indexOffset + strip_count;
 					mg->lods[lod].list_count  = list_count;
 					mg->lods[lod].num_verts	  = num_verts;
-					indexOffsets[mg->vertex_set_index] += strip_count + list_count;
+					indexOffset += strip_count + list_count;
+					if(indexOffset > e->index_count) {
+						last_error = "NMB mesh index range exceeds the shared index buffer";
+						goto fail;
+					}
 				} else {
 					mg->lods[lod] = mg->lods[0];
 				}
@@ -232,6 +266,10 @@ int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, Mo
 			// jointMapSize (1B) = num_bones in this mesh group's palette
 			if(pos + 1 > file_size) goto fail;
 			uint8_t jointMapSize = data[pos];
+			if(jointMapSize > 20) {
+				last_error = "Unsupported NMB bone palette at byte " + std::to_string(pos);
+				goto fail;
+			}
 			mg->num_bones		 = jointMapSize;
 			pos += 1;
 			if(pos + jointMapSize > file_size) goto fail;
@@ -254,7 +292,20 @@ int NMBParser::parse_entry(const uint8_t *data, size_t file_size, size_t off, Mo
 	pos += (size_t)e->marker_count * 68;
 	if(pos > file_size) goto fail;
 
-	*nextOffset = pos + 1;
+	if(m.version == 2) {
+		if(pos >= file_size) goto fail;
+		const uint8_t hasColors = data[pos++];
+		if(hasColors > 1) goto fail;
+		if(hasColors) {
+			const size_t colorBytes = size_t(e->total_vertices) * 4;
+			if(colorBytes > file_size - pos) goto fail;
+			e->vertex_colors = data + pos;
+			e->color_count = e->total_vertices;
+			pos += colorBytes;
+		}
+	}
+	*nextOffset = pos;
+	last_error.clear();
 	return 1;
 
 fail:
@@ -272,46 +323,39 @@ fail:
 /*
  */
 int NMBParser::parse(const char *filePath) {
+	size_t size = 0;
+	uint8_t *data = FileUtils::readBinaryFile(filePath, &size);
+	return parseOwnedBuffer(data, size);
+}
 
-	FILE *fp = fopen(filePath, "rb");
-	if(!fp) return 0;
+int NMBParser::parseBuffer(const uint8_t *data, size_t size) {
+	if(!data || size < 12 || size > 256u * 1024u * 1024u) return fail("Invalid NMB buffer size");
+	uint8_t *copy = static_cast<uint8_t *>(malloc(size));
+	if(!copy) return fail("Unable to allocate NMB buffer");
+	memcpy(copy, data, size);
+	return parseOwnedBuffer(copy, size);
+}
 
-	fseek(fp, 0, SEEK_END);
-	long fsize = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-	if(fsize < 12) {
-		fclose(fp);
-		return 0;
-	}
-	m.file_size = (size_t)fsize;
-
-	raw_data = (uint8_t *)malloc((size_t)fsize);
-	if(!raw_data) {
-		fclose(fp);
-		return 0;
-	}
-	if((long)fread(raw_data, 1, (size_t)fsize, fp) != fsize) {
-		free(raw_data);
-		raw_data = nullptr;
-		fclose(fp);
-		return 0;
-	}
-	fclose(fp);
+int NMBParser::parseOwnedBuffer(uint8_t *data, size_t fsize) {
+	clear();
+	last_error.clear();
+	raw_data = data;
+	if(!data || fsize < 12) return fail("Invalid or truncated NMB header");
+	m.file_size = fsize;
 
 	memcpy(&m.version, raw_data + 0, 4);
 	memcpy(&m.model_count, raw_data + 4, 4);
 	memcpy(&m.total_mem, raw_data + 8, 4);
 
 	if(m.version != 1 && m.version != 2) {
-		free(raw_data);
-		raw_data = nullptr;
-		return 0;
+		return fail("Unsupported NMB version");
 	}
+	if(m.model_count > MAX_MODELS) return fail("NMB model count exceeds supported limits");
 
 	// empty bundle (count=0) is valid
 	if(m.model_count == 0) {
 		m.parsed_count = 0;
-		printf("[NMB] %s: version=%u, 0 models (empty)\n", filePath, m.version);
+		printf("[NMB] buffer: version=%u, 0 models (empty)\n", m.version);
 		return 1;
 	}
 
@@ -338,10 +382,15 @@ int NMBParser::parse(const char *filePath) {
 		}
 	}
 
-	printf("[NMB] %s: version=%u, %u/%u models parsed, %u verts, %u indices\n", filePath, m.version, m.parsed_count,
+	printf("[NMB] buffer: version=%u, %u/%u models parsed, %u verts, %u indices\n", m.version, m.parsed_count,
 		   m.model_count, m.total_vertices, m.total_indices);
 
-	return 1; // header parsed successfully, even if not all entries decoded
+	if(m.parsed_count != m.model_count) {
+		if(last_error.empty()) last_error = "Truncated or unsupported NMB model entry";
+		clear();
+		return 0;
+	}
+	return 1;
 }
 
 /*

@@ -25,8 +25,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define __AUDIO_PLAYER_H__
 
 #include <cstdint>
+#include <cstddef>
 #include <atomic>
 #include <thread>
+#ifndef NODSDK_AUDIO_DISABLED
+#include <sys/types.h>
+#endif
 
 /*
  */
@@ -35,6 +39,14 @@ class AudioPlayer {
 	public:
 		AudioPlayer();
 		~AudioPlayer();
+
+		static bool isAvailable() {
+#ifdef NODSDK_AUDIO_DISABLED
+			return false;
+#else
+			return true;
+#endif
+		}
 
 		// play PCM16 audio; data copied internally. stops any current playback first.
 		void play(const int16_t *samples, uint32_t frame_count, uint32_t num_channels, uint32_t sample_rate);
@@ -68,7 +80,9 @@ class AudioPlayer {
 		uint32_t sample_rate = 0;
 
 		// child process for aplay
+#ifndef NODSDK_AUDIO_DISABLED
 		pid_t child_pid = -1;
+#endif
 };
 
 #endif // __AUDIO_PLAYER_H__

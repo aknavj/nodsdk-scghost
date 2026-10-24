@@ -27,6 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "AssetParser.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <string>
 
 /*
  */
@@ -141,13 +142,20 @@ class NODParser : public IAssetParser {
 		~NODParser() override;
 
 		int parse(const char *filePath) override;
+		int parseBuffer(const uint8_t *data, size_t size);
+		const std::string &getLastError() const { return last_error; }
 		int serialize(const char *filePath) const override;
 
 		const char *getFileType() const override { return "NOD"; }
 		const ModelData &getModelData() const { return m; }
+		bool computeBounds(float minimum[3], float maximum[3], std::string &error) const;
 
 	private:
 		ModelData m;
+		std::string last_error;
+		void clear();
+		int fail(const char *message);
+		int parseOwnedBuffer(uint8_t *data, size_t size);
 };
 
 #endif // __NODPARSER_H__

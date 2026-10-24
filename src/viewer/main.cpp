@@ -22,9 +22,18 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "app/ViewerApp.h"
+#include "../tools/common/tool_help.h"
+#include <cstring>
 
 /*
  */
 int main(int argc, char **argv) {
+	if(argc < 2 || (argc == 2 && std::strcmp(argv[1], "--help") == 0)) {
+		nod_tools_print_help(argc < 2 ? stderr : stdout, "NODAssetViewer",
+			"--help : Show help without opening a window.\n"
+			"asset_directory : Root of the extracted game asset tree to browse.\n",
+			"NODAssetViewer assets\n");
+		return argc < 2 ? 1 : 0;
+	}
 	return viewer::app::ViewerApp{}.run(argc, argv);
 }

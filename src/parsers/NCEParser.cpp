@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 
 /*
  */
@@ -135,8 +136,8 @@ int NCEParser::parse(const char *filePath) {
 			size_t actorStarts[NCE_MAX_ACTORS];
 			uint32_t nFound = 0;
 			while(sp + 8 < (size_t)fsize && nFound < NCE_MAX_ACTORS) {
-				const uint8_t *found = (const uint8_t *)memmem(data + sp, (size_t)fsize - sp, marker, 8);
-				if(!found) break;
+				const uint8_t *found = std::search(data + sp, data + fsize, marker, marker + sizeof(marker));
+				if(found == data + fsize) break;
 				size_t idx = (size_t)(found - data);
 				if(idx + 40 < (size_t)fsize && data[idx + 8] >= 0x20 && data[idx + 8] < 0x7F) {
 					actorStarts[nFound++] = idx;
@@ -215,8 +216,8 @@ void NCEParser::parse_actors(const uint8_t *data, size_t searchStart, size_t fil
 	while(sp + 8 < file_size && m.actor_count < NCE_MAX_ACTORS) {
 
 		// find next actor marker
-		const uint8_t *found = (const uint8_t *)memmem(data + sp, file_size - sp, marker, 8);
-		if(!found) break;
+		const uint8_t *found = std::search(data + sp, data + file_size, marker, marker + sizeof(marker));
+		if(found == data + file_size) break;
 
 		size_t aoff = (size_t)(found - data);
 

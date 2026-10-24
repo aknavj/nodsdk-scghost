@@ -22,134 +22,158 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "NSDParser.h"
+#include "NODParser.h"
 #include <cmath>
 
 /*
  */
-void NSDParser::extract_entity_names(const uint8_t *data, size_t data_size) {
-
-	uint32_t entCap		  = 512;
-	sd.entities			  = (SceneEntity *)calloc(entCap, sizeof(SceneEntity));
-	sd.entity_array_count = 0;
-	sd.type_name_count	  = 0;
-
-	// scan the entire NSD for tag-validated entity blocks.
-	// every entity block starts with a printable null-terminated string
-	// (the type name), has tag1=1 at +32 and tag2=2 at +68, and
-	// position/rotation at +72/+36 respectively.
-	size_t pos = 0;
-	while(pos + 84 < data_size) {
-		// find a printable null-terminated string (2..64 chars)
-		int slen = 0;
-		while(slen < 64 && pos + (size_t)slen < data_size && data[pos + slen] >= 32 && data[pos + slen] <= 126) slen++;
-		if(slen < 2 || slen >= 64 || pos + (size_t)slen >= data_size || data[pos + slen] != 0) {
-			pos++;
-			continue;
-		}
-
-		size_t T = pos;
-
-		// validate block: tag1=1 at +32, tag2=2 at +68
-		if(T + 84 > data_size) {
-			pos++;
-			continue;
-		}
-		uint32_t tag1, tag2;
-		memcpy(&tag1, data + T + 32, 4);
-		memcpy(&tag2, data + T + 68, 4);
-		if(tag1 != 1 || tag2 != 2) {
-			pos++;
-			continue;
-		}
-
-		// read position from +72 (3 floats)
-		float px, py, pz;
-		memcpy(&px, data + T + 72, 4);
-		memcpy(&py, data + T + 76, 4);
-		memcpy(&pz, data + T + 80, 4);
-
-		if(fabsf(px) > 100000.0f || fabsf(py) > 100000.0f || fabsf(pz) > 100000.0f) {
-			pos++;
-			continue;
-		}
-
-		// grow array if needed
-		if(sd.entity_array_count >= entCap) {
-			entCap *= 2;
-			sd.entities = (SceneEntity *)realloc(sd.entities, entCap * sizeof(SceneEntity));
-		}
-
-		SceneEntity *e = &sd.entities[sd.entity_array_count++];
-		memset(e, 0, sizeof(SceneEntity));
-		memcpy(e->type_name, data + T, (size_t)slen);
-		e->type_name[slen] = '\0';
-		e->block_offset	   = T;
-		e->block_size	   = 0;
-		e->position[0]	   = px;
-		e->position[1]	   = py;
-		e->position[2]	   = pz;
-		memcpy(e->rotation, data + T + 36, 12);
-		e->has_transform = true;
-
-		// scan for tag4 (model name) starting at +140, in 36-byte blocks
-		for(size_t blk = T + 140; blk + 36 <= data_size && blk < T + 140 + 36 * 4; blk += 36) {
-			uint32_t btag;
-			memcpy(&btag, data + blk, 4);
-			if(btag == 4 && blk + 4 + 2 < data_size) {
-				const char *str = (const char *)(data + blk + 4);
-				size_t sl		= strnlen(str, 60);
-				if(sl >= 2 && sl < 60) {
-					bool printable = true;
-					for(size_t c = 0; c < sl; c++) {
-						if(str[c] < 32 || str[c] > 126) {
-							printable = false;
-							break;
-						}
-					}
-					if(printable) {
-						strncpy(e->model_name, str, 63);
-						e->model_name[63] = '\0';
-						e->has_model	  = true;
-					}
-				}
-				break;
-			}
-		}
-
-		// extract script/effect name at +144 (tag 0xa1 at +140)
-		if(T + 204 <= data_size) {
-			uint32_t stag;
-			memcpy(&stag, data + T + 140, 4);
-			if(stag == 0xa1) {
-				const char *sn = (const char *)(data + T + 144);
-				size_t snl	   = strnlen(sn, 60);
-				if(snl > 0 && snl < 60) {
-					bool printable = true;
-					for(size_t c = 0; c < snl; c++) {
-						if(sn[c] < 32 || sn[c] > 126) {
-							printable = false;
-							break;
-						}
-					}
-					if(printable) strncpy(e->script_name, sn, 63);
-				}
-			}
-		}
-
-		// track unique type names
-		bool found = false;
-		for(uint32_t t = 0; t < sd.type_name_count; ++t) {
-			if(strcmp(sd.entity_type_names[t], e->type_name) == 0) {
-				found = true;
-				break;
-			}
-		}
-		if(!found && sd.type_name_count < MAX_TYPE_NAMES) {
-			strcpy(sd.entity_type_names[sd.type_name_count++], e->type_name);
-		}
-
-		pos = T + (size_t)slen + 32;
+namespace {
+bool name32(const uint8_t *data, char *out, bool terminated) {
+	size_t n = 0;
+	for(; n < 32 && data[n]; ++n) {
+		if(data[n] < 32 || data[n] > 126) return false;
+		out[n] = static_cast<char>(data[n]);
 	}
+	out[n] = 0;
+	return !terminated || (n > 0 && n < 32);
+}
+
+bool entityAt(const uint8_t *data, char *type) {
+	if(FileUtils::readUInt32(data, 32) != 1 || FileUtils::readUInt32(data, 68) != 2 ||
+	   !name32(data, type, true)) return false;
+	// Zero padding distinguishes type names from tag-like property-string suffixes.
+	for(size_t i = strlen(type); i < 32; ++i)
+		if(data[i]) return false;
+	return true;
+}
+}
+
+int NSDParser::extract_entity_names(const uint8_t *data, size_t data_size) {
+	uint32_t capacity = 512;
+	sd.entities = static_cast<SceneEntity *>(calloc(capacity, sizeof(SceneEntity)));
+	if(!sd.entities) return reject("out of memory reading NSD entities");
+	for(size_t pos = sd.object_data_offset + 8; pos <= data_size - 84; ++pos) {
+		char type[65];
+		if(!entityAt(data + pos, type)) continue;
+		for(size_t j = 0; j < 3; ++j)
+			if(!std::isfinite(FileUtils::readFloat(data, pos + 36 + j * 4)) ||
+			   !std::isfinite(FileUtils::readFloat(data, pos + 72 + j * 4)))
+				return reject("tagged NSD entity has non-finite transform");
+		if(sd.entity_array_count == capacity) {
+			if(capacity > UINT32_MAX / 2 || static_cast<size_t>(capacity) > SIZE_MAX / 2 / sizeof(SceneEntity))
+				return reject("NSD entity array is too large");
+			capacity *= 2;
+			auto *grown = static_cast<SceneEntity *>(realloc(sd.entities, capacity * sizeof(SceneEntity)));
+			if(!grown) return reject("out of memory growing NSD entities");
+			sd.entities = grown;
+		}
+		auto &e = sd.entities[sd.entity_array_count++];
+		memset(&e, 0, sizeof(e));
+		strcpy(e.type_name, type);
+		e.block_offset = pos;
+		e.has_transform = true;
+		for(size_t j = 0; j < 3; ++j) {
+			e.position[j] = FileUtils::readFloat(data, pos + 72 + j * 4);
+			e.rotation[j] = FileUtils::readFloat(data, pos + 36 + j * 4);
+		}
+		bool found = false;
+		for(uint32_t i = 0; i < sd.type_name_count; ++i)
+			if(!strcmp(sd.entity_type_names[i], type)) found = true;
+		if(!found && sd.type_name_count < MAX_TYPE_NAMES)
+			strcpy(sd.entity_type_names[sd.type_name_count++], type);
+		pos += 83;
+	}
+	for(uint32_t i = 0; i < sd.entity_array_count; ++i) {
+		auto &e = sd.entities[i];
+		const size_t end = i + 1 < sd.entity_array_count ? sd.entities[i + 1].block_offset : data_size;
+		const uint8_t *p = data + e.block_offset;
+		e.block_size = end - e.block_offset;
+		if(e.block_size >= 140) {
+			const uint32_t tag = FileUtils::readUInt32(p, 104);
+			if(tag == 3) { e.has_sector = true; e.sector = FileUtils::readUInt32(p, 108); }
+			else if(tag == 15 && !name32(p + 108, e.region_class, true)) e.region_class[0] = 0;
+		}
+		for(size_t slot = 140; slot <= e.block_size && e.block_size - slot >= 36 && slot < 284; slot += 36) {
+			if(FileUtils::readUInt32(p, slot) != 4) continue;
+			e.has_model_override = true;
+			e.model_override_valid = name32(p + slot + 4, e.model_name, false);
+			e.has_model = e.model_override_valid && *e.model_name;
+			break;
+		}
+		if(e.block_size >= 204 && FileUtils::readUInt32(p, 140) == 0xa1) {
+			size_t n = 0;
+			for(; n < 60 && p[144 + n] >= 32 && p[144 + n] <= 126; ++n) {}
+			if(n < 60 && p[144 + n] == 0) {
+				memcpy(e.script_name, p + 144, n);
+				e.script_name[n] = 0;
+			}
+		}
+		if(*e.region_class && !extract_region_bounds(e, data)) return 0;
+	}
+	return 1;
+}
+
+int NSDParser::extract_region_bounds(SceneEntity &entity, const uint8_t *data) {
+	entity.bounds_status = "unsupported-layout";
+	const size_t start = entity.block_offset;
+	const uint8_t *p = data + start;
+	// A type name is the payload of modifier zero; its count precedes that modifier.
+	if(start < 8 || FileUtils::readUInt32(data, start - 4) != 0) return 1;
+	const uint32_t modifiers = FileUtils::readUInt32(data, start - 8);
+	if(modifiers < 4 || modifiers > 128) return 1;
+	size_t offset = 32;
+	auto consume = [&](size_t count, size_t stride) {
+		if(offset > entity.block_size || count > (entity.block_size - offset) / stride) return false;
+		offset += count * stride;
+		return true;
+	};
+	if(!consume(modifiers - 1, 36)) return 1;
+	if(!consume(1, 4)) return reject("truncated NSD region frame count");
+	const uint32_t frames = FileUtils::readUInt32(p, offset - 4);
+	if(!consume(frames, 28) || !consume(1, 4)) return reject("truncated NSD region frames or parameter count");
+	const uint32_t parameters = FileUtils::readUInt32(p, offset - 4);
+	for(uint32_t i = 0; i < parameters; ++i) {
+		if(!consume(1, 4)) return reject("truncated NSD region parameter type");
+		const uint32_t type = FileUtils::readUInt32(p, offset - 4);
+		if(type == 6) continue;
+		if(type < 1 || type > 11) {
+			entity.bounds_status = "unsupported-parameter-type";
+			return 1;
+		}
+		if(!consume(1, 4)) return reject("truncated NSD region parameter value");
+		if(type == 7 && !consume(FileUtils::readUInt32(p, offset - 4), 1))
+			return reject("truncated NSD region parameter string");
+	}
+	if(!consume(1, 4)) return reject("truncated NSD region inline-model flag");
+	if(!FileUtils::readUInt32(p, offset - 4)) {
+		entity.bounds_status = "no-inline-model";
+		return 1;
+	}
+	const size_t model_offset = offset;
+	if(!consume(1, 92)) return reject("truncated NSD region inline-model header");
+	const uint8_t *header = p + model_offset;
+	if(header[6] > NODParser::MAX_VERTEX_SETS) return reject("invalid NSD region vertex set count");
+	if(!consume(header[4], 32) || !consume(header[5], 64))
+		return reject("truncated NSD region shaders or bones");
+	for(uint8_t i = 0; i < header[6]; ++i) {
+		const uint32_t type = FileUtils::readUInt32(header, 36 + size_t(i) * 8);
+		const uint32_t count = FileUtils::readUInt32(header, 40 + size_t(i) * 8);
+		static const size_t strides[] = {32, 36, 48, 68, 72, 84};
+		if(type > 5 || !consume(count, strides[type])) return reject("invalid NSD region vertex stream");
+	}
+	if(!consume(FileUtils::readUInt32(header, 68), 2) || !consume(header[7], 56))
+		return reject("truncated NSD region indices or groups");
+	NODParser model;
+	std::string error;
+	if(!model.parseBuffer(p + model_offset, offset - model_offset) ||
+	   !model.computeBounds(entity.bounds_min, entity.bounds_max, error)) {
+		fprintf(stderr, "NSDParser: region at byte %zu: %s\n", start,
+				error.empty() ? model.getLastError().c_str() : error.c_str());
+		return reject("invalid NSD region inline geometry");
+	}
+	entity.has_bounds = true;
+	entity.bounds_status = "inline-mesh";
+	return 1;
 }
 
 // scan the NSD binary for the sky dome model reference.
@@ -165,6 +189,10 @@ void NSDParser::extract_sky_model(const uint8_t *data, size_t data_size) {
 	sd.sky_model_name[0] = '\0';
 
 	for(size_t pos = 0; pos + 36 < data_size; pos++) {
+		if(pos >= 80 && pos < sd.object_data_offset) {
+			pos = sd.object_data_offset - 1;
+			continue;
+		}
 		// look for a printable string starting here
 		int slen = 0;
 		while(slen < 60 && pos + (size_t)slen < data_size && data[pos + slen] >= 32 && data[pos + slen] <= 126) slen++;
@@ -201,7 +229,7 @@ void NSDParser::extract_sky_model(const uint8_t *data, size_t data_size) {
 		strncpy(sd.sky_model_name, str, 63);
 		sd.sky_model_name[63] = '\0';
 		sd.has_sky_model	  = true;
-		printf("[NSD] Sky model: %s\n", sd.sky_model_name);
+		fprintf(stderr, "[NSD] Sky model: %s\n", sd.sky_model_name);
 		return;
 	}
 }
@@ -209,28 +237,53 @@ void NSDParser::extract_sky_model(const uint8_t *data, size_t data_size) {
 /*
  */
 int NSDParser::parse(const char *filePath) {
-
 	size_t file_size = 0;
-	uint8_t *data	 = FileUtils::readBinaryFile(filePath, &file_size);
-	if(!data || file_size < 8) {
-		free(data);
-		return 0;
+	uint8_t *data = FileUtils::readBinaryFile(filePath, &file_size);
+	if(!data) return reject("cannot read NSD file");
+	int ok = parseBuffer(data, file_size);
+	free(data);
+	return ok;
+}
+
+void NSDParser::clear() {
+	template_files.clear();
+	free(sd.entities);
+	free(sd.raw_data);
+	memset(&sd, 0, sizeof(sd));
+}
+
+int NSDParser::reject(const char *message) {
+	clear();
+	last_error = message;
+	return 0;
+}
+
+int NSDParser::parseBuffer(const uint8_t *data, size_t size) {
+	last_error = "";
+	if(!data || size < 92 || memcmp(data, "NSD\x10", 4))
+		return reject("expected NSD header with 92 bytes and magic NSD\\x10");
+	auto *copy = static_cast<uint8_t *>(malloc(size));
+	if(!copy) return reject("out of memory reading NSD source bytes");
+	memcpy(copy, data, size);
+	clear();
+	sd.raw_data = copy;
+	sd.raw_data_size = sd.file_size = size;
+	sd.magic = FileUtils::readUInt32(copy, 0);
+	sd.version = FileUtils::readUInt32(copy, 4);
+	const uint32_t archive_count = FileUtils::readUInt32(copy, 76);
+	if(archive_count > MAX_TEMPLATE_FILES || archive_count > (size - 84) / 32)
+		return reject("invalid or truncated NSD template archive list");
+	for(uint32_t i = 0; i < archive_count; ++i) {
+		char name[33];
+		if(!name32(copy + 80 + size_t(i) * 32, name, true))
+			return reject("invalid NSD template archive name");
+		template_files.emplace_back(name);
 	}
-
-	if(data[0] != 'N' || data[1] != 'S' || data[2] != 'D') {
-		free(data);
-		return 0;
-	}
-
-	sd.file_size	= file_size;
-	sd.magic		= FileUtils::readUInt32(data, 0);
-	sd.entity_count = FileUtils::readUInt32(data, 4);
-
-	extract_entity_names(data, file_size);
-	extract_sky_model(data, file_size);
-
-	sd.raw_data		 = data;
-	sd.raw_data_size = file_size;
+	const size_t count_offset = 80 + size_t(archive_count) * 32;
+	sd.entity_count = FileUtils::readUInt32(copy, count_offset);
+	sd.object_data_offset = count_offset + 4;
+	if(!extract_entity_names(copy, size)) return 0;
+	extract_sky_model(copy, size);
 	return 1;
 }
 
@@ -239,4 +292,28 @@ int NSDParser::parse(const char *filePath) {
 int NSDParser::serialize(const char *filePath) const {
 
 	return FileUtils::writeBinaryFile(filePath, sd.raw_data, sd.raw_data_size);
+}
+
+bool NSDParser::getModifiers(const SceneEntity &entity, std::vector<NODModifier> &out) const {
+	return readModifiers(sd.raw_data, sd.raw_data_size, entity, out);
+}
+
+bool NSDParser::readModifiers(const uint8_t *data, size_t size, const SceneEntity &entity,
+							 std::vector<NODModifier> &out) {
+	out.clear();
+	const auto offset = entity.block_offset;
+	if(!data || offset < 8 || offset > size || entity.block_size > size - offset) return false;
+	if(FileUtils::readUInt32(data, offset - 4) != 0) return false;
+	const auto count = FileUtils::readUInt32(data, offset - 8);
+	if(count < 3 || count > 128 || size_t(count) * 36 > entity.block_size + 4) return false;
+	for(uint32_t i = 0; i < count; ++i) {
+		const size_t start = offset - 4 + size_t(i) * 36;
+		NODModifier property{};
+		property.prop_id = FileUtils::readUInt32(data, start);
+		property.value_size = 32;
+		property.value_offset = start + 4;
+		memcpy(property.value, data + start + 4, 32);
+		out.push_back(property);
+	}
+	return true;
 }

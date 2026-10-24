@@ -26,16 +26,20 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifndef NODSDK_AUDIO_DISABLED
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
+#endif
 #include <algorithm>
 
 /*
  */
 AudioPlayer::AudioPlayer() {
+#ifndef NODSDK_AUDIO_DISABLED
 	// Ignore SIGPIPE so writes to closed pipes don't kill us
 	signal(SIGPIPE, SIG_IGN);
+#endif
 }
 
 /*
@@ -62,6 +66,9 @@ float AudioPlayer::getPosition() const {
 void AudioPlayer::play(const int16_t *samples, uint32_t frame_count, uint32_t num_channels, uint32_t sample_rate) {
 	stop();
 
+#ifdef NODSDK_AUDIO_DISABLED
+	std::fprintf(stderr, "[AudioPlayer] Playback is disabled in this viewer build\n");
+#else
 	if(!samples || frame_count == 0 || num_channels == 0 || sample_rate == 0) return;
 
 	this->frame_count = frame_count;
@@ -77,6 +84,7 @@ void AudioPlayer::play(const int16_t *samples, uint32_t frame_count, uint32_t nu
 	progress	   = 0.0f;
 
 	thread = std::thread(&AudioPlayer::play_thread, this);
+#endif
 }
 
 /*
@@ -85,11 +93,13 @@ void AudioPlayer::stop() {
 	stop_requested = true;
 
 	// Kill child process if running
+#ifndef NODSDK_AUDIO_DISABLED
 	if(child_pid > 0) {
 		kill(child_pid, SIGKILL);
 		waitpid(child_pid, nullptr, 0);
 		child_pid = -1;
 	}
+#endif
 
 	if(thread.joinable()) thread.join();
 
@@ -107,6 +117,7 @@ void AudioPlayer::cleanup() {
 
 /*
  */
+#ifndef NODSDK_AUDIO_DISABLED
 void AudioPlayer::play_thread() {
 	int pipefd[2];
 	if(pipe(pipefd) < 0) {
@@ -170,3 +181,4 @@ void AudioPlayer::play_thread() {
 	progress   = 1.0f;
 	is_playing = false;
 }
+#endif
