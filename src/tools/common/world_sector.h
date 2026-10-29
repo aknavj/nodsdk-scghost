@@ -8,7 +8,7 @@ StaRev - Starcraft Ghost reversed
 This file is part of the StaRev source code.
 
 File: world_sector.h
-Version: 0.6.7
+Version: 0.6.8
 
 StaRev is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License version 3
@@ -53,7 +53,7 @@ struct SectorData {
 		std::vector<uint8_t> bytes;
 };
 
-// One primary vertex pool; direct DDS materials and zero authoring flags only.
+// One primary vertex pool; DDS-backed direct/NSA materials and zero authoring flags only.
 // Adjacent material runs are merged without reordering render/collision triangles.
 // Group shader indices address render.materials unchanged.
 // Carries baked diffuse and native static lights when supplied by the CPU bake.
