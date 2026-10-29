@@ -8,7 +8,7 @@ StaRev - Starcraft Ghost reversed
 This file is part of the StaRev source code.
 
 File: world_lighting.cpp
-Version: 0.6.7
+Version: 0.6.8
 
 StaRev is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License version 3
@@ -209,7 +209,10 @@ bool refine_lighting_geometry(const Geometry &input, float spacing, Geometry &ou
 				}
 
 				if(indices.size() / 3 > 4096) {
-					return reject(error, "Lighting exceeds 4096 triangles; increase nod_light_spacing");
+					error = "Lighting exceeds 4096 triangles (partial subdivision count: " +
+							std::to_string(indices.size() / 3) + ", nod_light_spacing: " + std::to_string(spacing) +
+							"); increase nod_light_spacing";
+					return false;
 				}
 			}
 

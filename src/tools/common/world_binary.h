@@ -8,7 +8,7 @@ StaRev - Starcraft Ghost reversed
 This file is part of the StaRev source code.
 
 File: world_binary.h
-Version: 0.6.7
+Version: 0.6.8
 
 StaRev is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License version 3
@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define __WORLD_BINARY_H__
 
 #include "tool_common.h"
+#include "NILCollision.h"
 #include <array>
 #include <vector>
 
@@ -83,6 +84,18 @@ class Writer {
 		 */
 		void append(const std::vector<uint8_t> &value) { 
 			bytes.insert(bytes.end(), value.begin(), value.end()); 
+		}
+
+		/*
+		 */
+		void collision_mapping(const nil::CollisionSector &sector) {
+			word(sector.present);
+			for(const auto &group : sector.groups) {
+				word(group.present);
+				if(group.present) {
+					word(group.offset);
+				}
+			}
 		}
 };
 

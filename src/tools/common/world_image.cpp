@@ -8,7 +8,7 @@ StaRev - Starcraft Ghost reversed
 This file is part of the StaRev source code.
 
 File: world_image.cpp
-Version: 0.6.7
+Version: 0.6.8
 
 StaRev is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License version 3
@@ -135,11 +135,7 @@ bool build_world_image(const Geometry &geometry, const RenderGeometry &render,
 	writer.half(1); // Sector-owned rigid body.
 	writer.half(0);
 	writer.byte(0);
-	writer.word(sector.collision_mapping.present);
-	for(const auto &group : sector.collision_mapping.groups) {
-		writer.word(group.present);
-		writer.word(group.offset);
-	}
+	writer.collision_mapping(sector.collision_mapping);
 
 	WorldImage result;
 	result.bytes			 = std::move(writer.bytes);

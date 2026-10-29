@@ -98,18 +98,25 @@ bool compile(const nod_scene::Map &map, Graph &out, std::string &error) {
 			error = "Entity " + std::to_string(i) + ": " + why;
 			return false;
 		};
-		if(std::string(property(entity, "nod_authoring")) != "npd-world-v1" || *property(entity, "nod_id") ||
-		   entity.brush_count) {
-			return fail("Expected a MAP-only world-space waypoint/link, not imported NPD metadata");
+		if(*property(entity, "nod_id")) {
+			return fail("Imported NPD metadata (nod_id) is not supported by MAP-only waypoint/link authoring");
+		}
+
+		if(entity.brush_count) {
+			return fail("Waypoints and links must be point entities without brushes");
+		}
+
+		if(std::string(property(entity, "nod_authoring")) != "npd-world-v1") {
+			return fail("Expected nod_authoring \"npd-world-v1\" for a MAP-only waypoint/link");
 		}
 
 		if(std::string(property(entity, "nod_space")) != "world") {
-			return fail("Expected nod_space world");
+			return fail("Expected nod_space \"world\" for a MAP-only waypoint/link");
 		}
 
 		std::array<float, 3> position;
 		if(!nod_scene::float_vector(property(entity, "origin"), position.data())) {
-			return fail("Expected a finite world-space origin");
+			return fail("Expected origin with three finite world-space coordinates");
 		}
 
 		const bool node = std::string(property(entity, "classname")) == "nod_npd_waypoint";
@@ -129,9 +136,12 @@ bool compile(const nod_scene::Map &map, Graph &out, std::string &error) {
 		if(node) {
 			uint32_t id	   = 0;
 			uint32_t flags = 0;
-			if(!number(property(entity, "nod_waypoint_id"), 65534, id) ||
-			   !number(property(entity, "nod_flags"), 0, flags)) {
-				return fail("Use a unique ID 0..65534 and normal flags 0");
+			if(!number(property(entity, "nod_waypoint_id"), 65534, id)) {
+				return fail("Expected nod_waypoint_id in 0..65534 (canonical decimal integer)");
+			}
+
+			if(!number(property(entity, "nod_flags"), 0, flags)) {
+				return fail("Expected nod_flags \"0\"");
 			}
 
 			if(nodes.size() == 65535 || indices.count(uint16_t(id))) {
@@ -145,9 +155,16 @@ bool compile(const nod_scene::Map &map, Graph &out, std::string &error) {
 			uint32_t from  = 0;
 			uint32_t to	   = 0;
 			uint32_t flags = 0;
-			if(!number(property(entity, "nod_from"), 65534, from) || !number(property(entity, "nod_to"), 65534, to) ||
-			   !number(property(entity, "nod_link_flags"), 0, flags)) {
-				return fail("Use waypoint IDs and normal link flags 0");
+			if(!number(property(entity, "nod_from"), 65534, from)) {
+				return fail("Expected nod_from waypoint ID in 0..65534 (canonical decimal integer)");
+			}
+
+			if(!number(property(entity, "nod_to"), 65534, to)) {
+				return fail("Expected nod_to waypoint ID in 0..65534 (canonical decimal integer)");
+			}
+
+			if(!number(property(entity, "nod_link_flags"), 0, flags)) {
+				return fail("Expected nod_link_flags \"0\"");
 			}
 
 			if(links.size() == 65535 || from == to) {

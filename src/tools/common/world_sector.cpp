@@ -8,7 +8,7 @@ StaRev - Starcraft Ghost reversed
 This file is part of the StaRev source code.
 
 File: world_sector.cpp
-Version: 0.6.7
+Version: 0.6.8
 
 StaRev is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License version 3
@@ -86,9 +86,6 @@ bool build_sector(const Geometry &geometry, const RenderGeometry &render, Sector
 			return reject(error, "Duplicate native shader binding");
 		}
 
-		if(material.scripted) {
-			return reject(error, "Scripted sector shaders are not supported yet");
-		}
 	}
 
 	SectorData result;
