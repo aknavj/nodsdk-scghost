@@ -390,10 +390,24 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 	}
 
 	NODModifier sector{};
-	sector.prop_id	  = 3;
+	sector.prop_id	  = expected_type == 3 ? 15 : 3;
 	sector.value_size = 32;
-	if(values.size() > 3 && values[3].prop_id == 3) {
-		put32(values[3].value, 0);
+	if(expected_type == 3) {
+		const std::string handler = property(&entity, "nod_prop_15");
+		if(handler != "cRegionTrigger" || !*property(&entity, "nod_script_authoring")) {
+			error = "New regions require the verified cRegionTrigger schema";
+			return false;
+		}
+
+		std::copy(handler.begin(), handler.end(), sector.value);
+	}
+
+	if(values.size() > 3 && values[3].prop_id == sector.prop_id) {
+		if(expected_type == 3) {
+			values[3] = sector;
+		} else {
+			put32(values[3].value, 0);
+		}
 	} else {
 		values.insert(values.begin() + 3, sector);
 	}
@@ -449,6 +463,9 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 
 		const bool handler = key == "nod_prop_15" &&
 			!std::strcmp(property(&entity, "nod_script_authoring"), "parameters-v1");
+		if(expected_type == 3 && handler) {
+			continue;
+		}
 		if(key.compare(0, 9, "nod_prop_") != 0 || !number(key.substr(9), 176, id) ||
 		   (!handler && (!nodPropertyMapEditable(id, false) || !find(resolved, id)))) {
 			error = "Unsupported or absent template property: " + key;
@@ -457,10 +474,7 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 
 		NODModifier value{};
 		if(handler) {
-			const auto *native_type = find(resolved, 20);
-			const auto *model = find(resolved, 4);
-			const bool modeled = native_type && u32(native_type->value) == 2 && model && model->value[0];
-			if(nod::script::defaults(name, text, modeled).empty()) {
+			if(nod::script::defaults(text).empty()) {
 				error = "Unsupported native handler/NOT template combination";
 				return false;
 			}
@@ -503,17 +517,26 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 		return false;
 	}
 
-	if(expected_type != 0 && expected_type != 2 && expected_type != 7 && expected_type != 8) {
+	if(expected_type != 0 && expected_type != 2 && expected_type != 3 && expected_type != 7 && expected_type != 8) {
 		error = "Template '" + name + "' has unsupported native type " + std::to_string(expected_type) +
-				"; supported point types are 0, 2, 7 and 8";
+				"; supported point types are 0, 2, 3, 7 and 8";
 		return false;
 	}
 
-	for(size_t i = 1; i <= 3; ++i) {
+	for(size_t i = 1; i <= (expected_type == 3 ? 2u : 3u); ++i) {
 		const auto *effective = find(resolved, uint32_t(i));
 		if(!effective || std::memcmp(effective->value, values[i].value, i == 3 ? 4 : 12)) {
 			error = "Later modifiers override the placement transform or sector";
 			return false;
+		}
+	}
+
+	if(expected_type == 3) {
+		for(size_t axis = 0; axis < 3; ++axis) {
+			if(f32(values[1].value + axis * 4) != 0) {
+				error = "New trigger regions currently require zero rotation";
+				return false;
+			}
 		}
 	}
 
@@ -613,7 +636,12 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 	}
 
 	if(*property(&entity, "nod_script_authoring")) {
-		if(!nod::script::body(entity, targets, bytes, error, modeled)) {
+		if(!nod::script::compatible(property(&entity, "nod_prop_15"), resolved)) {
+			error = "Native handler is incompatible with the resolved NOT placement";
+			return false;
+		}
+
+		if(!nod::script::body(entity, targets, bytes, error, templates)) {
 			return false;
 		}
 	} else {
@@ -674,12 +702,6 @@ bool compile(const nod_scene::Map &map, const fs::path &workspace, const fs::pat
 			generic_targets.insert(target);
 		}
 	}
-
-	if(!nod::script::compile(map, static_cast<uint32_t>(placements.size()), generic_targets, script_records, error)) {
-		return false;
-	}
-
-	const auto record_count = placements.size() + script_records.size();
 
 	const auto &world = map.entities[0];
 	for(size_t i = 0; i < world.pair_count; ++i) {
@@ -747,10 +769,24 @@ bool compile(const nod_scene::Map &map, const fs::path &workspace, const fs::pat
 		}
 	}
 
+	bool needs_templates = !placements.empty();
+	for(size_t i = 1; i < map.count; ++i) {
+		const auto &entity = map.entities[i];
+		needs_templates = needs_templates || !std::strcmp(property(&entity, "classname"), "nod_enemy_spawn") ||
+						  nod_scene::get_property(&entity, "nod_console_template");
+	}
+
 	NOTDatabase templates;
-	if(!placements.empty() && !templates.load(workspace, archives, error, assets)) {
+	if(needs_templates && !templates.load(workspace, archives, error, assets)) {
 		return false;
 	}
+
+	if(!nod::script::compile(map, static_cast<uint32_t>(placements.size()), generic_targets, script_records, error,
+							needs_templates ? &templates : nullptr)) {
+		return false;
+	}
+
+	const auto record_count = placements.size() + script_records.size();
 
 	for(const auto &warning : templates.warnings()) {
 		std::cerr << "MAPtoNSD: " << warning << '\n';

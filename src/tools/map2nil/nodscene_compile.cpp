@@ -452,7 +452,21 @@ int compile_map(const Blob *input, Blob sources[SOURCE_COUNT], const Map *bindin
 			++first_preset;
 		}
 
-		if(!nod::script::compile(actual, first_preset, existing_targets, records, error)) {
+		for(size_t i = 0; i < actual.count && !loaded_templates; ++i) {
+			const auto &entity = actual.entities[i];
+			if(!std::strcmp(get_property(&entity, "classname"), "nod_enemy_spawn") ||
+			   get_property(&entity, "nod_console_template")) {
+				if(workspace.empty() || assets.empty() ||
+				   !templates.load(workspace, parser.getTemplateFiles(), error, assets)) {
+					return scene_error(("Catalog-backed presets require workspace and asset-root arguments: " + error).c_str()) != 0;
+				}
+
+				loaded_templates = true;
+			}
+		}
+
+		if(!nod::script::compile(actual, first_preset, existing_targets, records, error,
+								loaded_templates ? &templates : nullptr)) {
 			return scene_error(error.c_str()) != 0;
 		}
 
@@ -549,6 +563,23 @@ int compile_map(const Blob *input, Blob sources[SOURCE_COUNT], const Map *bindin
 			const auto &entity = *identities.at(identity);
 			nod::imported::Fields fields;
 			nod::imported::script_fields(parser, native, fields);
+			const auto original_actor = fields.find("nod_script_param_2");
+			const auto *actor = get_property(&entity, "nod_script_param_2");
+			if(ai_paths.count(i) && original_actor != fields.end() && actor && original_actor->second != actor) {
+				if(!loaded_templates) {
+					if(workspace.empty() || assets.empty() ||
+					   !templates.load(workspace, parser.getTemplateFiles(), error, assets)) {
+						return scene_error(("Editing an actor template requires workspace and asset-root arguments: " + error).c_str()) != 0;
+					}
+
+					loaded_templates = true;
+				}
+
+				if(!nod::script::actor_template(templates, actor, error)) {
+					return scene_error((identity + ": " + error).c_str()) != 0;
+				}
+			}
+
 			const auto *target = get_property(&entity, "nod_script_param_16");
 			const auto receiver = target ? targets.find(target) : targets.end();
 			const auto original_target = fields.find("nod_script_param_16");

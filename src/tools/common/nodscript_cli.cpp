@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "nod_script.h"
+#include "NOTDatabase.h"
 #include "../editors/workspace.h"
 #include <cmath>
 #include <cctype>
@@ -304,7 +305,8 @@ void remove_source_reference(std::string &map) {
 int main(int argc, char **argv) {
 	bool check = false;
 	std::string label, error;
-	fs::path workspace;
+	fs::path workspace, assets;
+	std::vector<std::string> archives;
 	std::vector<fs::path> paths;
 	for(int i = 1; i < argc; ++i) {
 		const std::string arg = argv[i];
@@ -312,18 +314,23 @@ int main(int argc, char **argv) {
 			std::cout << "NODScript: native-compatible script source compiler (language version 1)\n"
 				"NODScript --check source.nods input.map\n"
 				"NODScript --workspace DIR [--source-name NAME] source.nods input.map expanded.map\n"
+				"Optional --asset-root DIR [--archive NAME ...] validates templates against NOT archives.\n"
 				"Preserves MAP content; appends verified native control declarations.\n"
 				"Supports console, sound, enemy, sequence, trigger and wait; no arbitrary runtime code.\n";
 			return 0;
 		} else if(arg == "--check") {
 			check = true;
-		} else if(arg == "--workspace" || arg == "--source-name") {
+		} else if(arg == "--workspace" || arg == "--source-name" || arg == "--asset-root" || arg == "--archive") {
 			if(++i == argc) {
 				std::cerr << "NODScript: missing value for " << arg << "\n";
 				return 1;
 			}
 			if(arg == "--workspace") {
 				workspace = fs::u8path(argv[i]);
+			} else if(arg == "--asset-root") {
+				assets = fs::u8path(argv[i]);
+			} else if(arg == "--archive") {
+				archives.emplace_back(argv[i]);
 			} else {
 				label = argv[i];
 			}
@@ -381,7 +388,40 @@ int main(int argc, char **argv) {
 		return failure(label + ": generated MAP is invalid");
 	}
 	std::vector<std::vector<uint8_t>> records;
-	const bool valid = nod::script::compile(expanded, static_cast<uint32_t>(imported.size()), imported, records, error);
+	NOTDatabase templates;
+	if(!assets.empty()) {
+		if(archives.empty()) {
+			for(size_t i = 0; i < expanded.count; ++i) {
+				if(!nod::script::template_class(expanded.entities[i])) {
+					continue;
+				}
+
+				const auto *context = nod_scene::get_property(&expanded.entities[i], "nod_template_archives");
+				std::istringstream input(context ? context : "");
+				std::string archive;
+				while(std::getline(input, archive, ';')) {
+					archives.push_back(archive);
+				}
+
+				break;
+			}
+		}
+
+		if(!templates.load(workspace, archives, error, assets)) {
+			nod_scene::free_map(&expanded);
+			return failure(error);
+		}
+	} else {
+		if(!archives.empty()) {
+			nod_scene::free_map(&expanded);
+			return failure("--archive requires --asset-root and --workspace");
+		}
+
+		std::cerr << "NODScript: no NOT catalog supplied; template compatibility must be validated by MAPtoNSD/NODscene.\n";
+	}
+
+	const bool valid = nod::script::compile(expanded, static_cast<uint32_t>(imported.size()), imported, records, error,
+										  assets.empty() ? nullptr : &templates);
 	nod_scene::free_map(&expanded);
 	if(!valid) {
 		size_t index = first;
