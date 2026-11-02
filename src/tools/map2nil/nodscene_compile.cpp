@@ -30,6 +30,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "NPDParser.h"
 #include "NSDParser.h"
+#include "NOTDatabase.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -41,6 +42,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include <string.h>
 
 #include "scene_bridge.h"
+#include "nod_script.h"
+#include "nod_imported.h"
+#include "path_graph.h"
+#include <algorithm>
+#include <map>
+#include <set>
 
 /*
  */
@@ -323,82 +330,327 @@ int patch_property(Blob sources[SOURCE_COUNT], const Entity *entity, const char 
 
 /*
  */
-int compile_map(const Blob *input, Blob sources[SOURCE_COUNT], const Map *bindings, GeometryMode geometry) {
-	Blob baseline		= {};
-	Map actual			= {};
-	Map expected		= {};
-	size_t change_count = 0;
-	int is_successful	= 0;
-	if(!scene_map(sources, &baseline, bindings, geometry) || !parse_map(&baseline, &expected) ||
-	   !parse_map(input, &actual)) {
-		goto cleanup;
-	}
-
-	if(actual.count != expected.count) {
-		scene_error("entity addition/deletion is not supported");
-		goto cleanup;
-	}
-
-	for(size_t i = 0; i < expected.count; ++i) {
-		Entity *actual_entity	= &actual.entities[i];
-		Entity *expected_entity = &expected.entities[i];
-		if(strcmp(entity_id(actual_entity), entity_id(expected_entity)) ||
-		   actual_entity->pair_count != expected_entity->pair_count) {
-			scene_error("entity identity or property set changed");
-			goto cleanup;
+int compile_map(const Blob *input, Blob sources[SOURCE_COUNT], const Map *bindings, GeometryMode geometry,
+				const std::filesystem::path &workspace, const std::filesystem::path &assets) {
+	Blob baseline{};
+	Map actual{};
+	Map expected{};
+	const bool successful = [&]() {
+		if(!scene_map(sources, &baseline, bindings, geometry) || !parse_map(&baseline, &expected) ||
+		   !parse_authoring_map(input, &actual)) {
+			return false;
 		}
 
-		if(actual_entity->brush_count != expected_entity->brush_count) {
-			scene_error("geometry edits are not supported");
-			goto cleanup;
+		NSDParser parser;
+		if(!parser.parseBuffer(sources[SOURCE_NSD].data, sources[SOURCE_NSD].size)) {
+			return false;
 		}
 
-		for(size_t j = 0; j < expected_entity->brush_count; ++j) {
-			if(strcmp(actual_entity->brushes[j], expected_entity->brushes[j])) {
-				scene_error("geometry/material/UV edits are not supported");
-				goto cleanup;
+		const auto &scene = parser.getSceneData();
+		const std::vector<uint8_t> original_npd_bytes(sources[SOURCE_NPD].data,
+												 sources[SOURCE_NPD].data + sources[SOURCE_NPD].size);
+		std::map<std::string, Entity *> identities;
+		std::set<std::string> expected_ids;
+		for(size_t i = 0; i < expected.count; ++i) {
+			expected_ids.emplace(entity_id(&expected.entities[i]));
+		}
+
+		for(size_t i = 0; i < actual.count; ++i) {
+			auto &entity = actual.entities[i];
+			const auto *id = entity_id(&entity);
+			if(id) {
+				if(!expected_ids.count(id) || !identities.emplace(id, &entity).second) {
+					return scene_error("Unknown or duplicate stable entity identity") != 0;
+				}
+			} else if(!nod::script::authoring_class(entity) && !nod::script::template_class(entity) &&
+					  !nod::path::authoring_class(entity)) {
+				return scene_error("Only NOT placements, native controls and NPD points may be added") != 0;
+			}
+
+			if((nod::script::authoring_class(entity) || nod::script::template_class(entity)) &&
+			   scene.entity_count != scene.entity_array_count) {
+				return scene_error("Appending presets requires a fully verified imported NSD object set") != 0;
+			}
+
+			if(entity.brush_count) {
+				std::sort(entity.brushes, entity.brushes + entity.brush_count,
+						  [](const char *a, const char *b) { return std::strcmp(a, b) < 0; });
 			}
 		}
 
-		for(size_t j = 0; j < expected_entity->pair_count; ++j) {
-			const Pair *property	 = &expected_entity->pairs[j];
-			const char *actual_value = get_property(actual_entity, property->key);
-			if(!actual_value) {
-				scene_error("required property missing");
-				goto cleanup;
+		std::map<std::string, uint32_t> targets;
+		std::set<uint32_t> ai_paths;
+		std::set<uint32_t> action_scripts;
+		for(uint32_t i = 0; i < scene.entity_array_count; ++i) {
+			targets.emplace("nsd:" + std::to_string(scene.entities[i].block_offset), i);
+			std::vector<NODModifier> modifiers;
+			if(parser.getModifiers(scene.entities[i], modifiers)) {
+				for(size_t slot = 4; slot < modifiers.size(); ++slot) {
+					std::string script;
+					if(modifiers[slot].prop_id == 15 && nodModifierString(modifiers[slot], script)) {
+						if(script == "cAIFightPath") {
+							ai_paths.insert(i);
+						} else if(script == "cTriggerOnAction") {
+							action_scripts.insert(i);
+						}
+					}
+				}
+			}
+		}
+
+		std::vector<std::vector<uint8_t>> records;
+		std::string error;
+		const auto imported_targets = targets;
+		if(!nod::script::targets(actual, scene.entity_array_count, targets, error)) {
+			return scene_error(error.c_str()) != 0;
+		}
+
+		NOTDatabase templates;
+		bool loaded_templates = false;
+		std::map<std::string, uint32_t> existing_targets = imported_targets;
+		uint32_t first_preset = scene.entity_array_count;
+		for(size_t i = 0; i < actual.count; ++i) {
+			const auto &entity = actual.entities[i];
+			if(!nod::script::template_class(entity)) {
+				continue;
 			}
 
-			if(strcmp(actual_value, property->value)) {
-				if(!is_editable(expected_entity, property->key)) {
-					fprintf(stderr, "NODscene: read-only property '%s' changed on '%s'\n", property->key,
-							entity_id(expected_entity));
-					goto cleanup;
+			if(!loaded_templates) {
+				if(workspace.empty() || assets.empty() ||
+				   !templates.load(workspace, parser.getTemplateFiles(), error, assets)) {
+					return scene_error(("New NOT placements require workspace and asset-root arguments: " + error).c_str()) != 0;
 				}
 
-				if(!patch_property(sources, expected_entity, property->key, actual_value)) {
-					goto cleanup;
+				loaded_templates = true;
+			}
+
+			std::string context;
+			for(const auto &archive : parser.getTemplateFiles()) {
+				if(!context.empty()) {
+					context += ';';
 				}
 
-				++change_count;
+				context += archive;
+			}
+
+			const auto *placement_context = get_property(&entity, "nod_template_archives");
+			if(!placement_context || context != placement_context) {
+				return scene_error("New NOT placements must use the imported scene's ordered archive context") != 0;
+			}
+
+			std::vector<uint8_t> record;
+			if(!nod::script::placement(entity, templates, targets, record, error)) {
+				return scene_error(error.c_str()) != 0;
+			}
+
+			records.push_back(std::move(record));
+			const auto *name = get_property(&entity, "targetname");
+			if(name && *name) {
+				existing_targets.emplace(name, first_preset);
+			}
+
+			++first_preset;
+		}
+
+		if(!nod::script::compile(actual, first_preset, existing_targets, records, error)) {
+			return scene_error(error.c_str()) != 0;
+		}
+
+		uint32_t index = first_preset;
+		for(size_t i = 0; i < actual.count; ++i) {
+			const auto &entity = actual.entities[i];
+			if(nod::script::authoring_class(entity)) {
+				const auto *target = get_property(&entity, "target");
+				const auto receiver = target ? targets.find(target) : targets.end();
+				if(receiver != targets.end() && ai_paths.count(receiver->second)) {
+					return scene_error("Connect an imported cAIFightPath through a start/stop pulse relay, not directly") != 0;
+				}
+
+				const bool spawn = !std::strcmp(get_property(&entity, "classname"), "nod_enemy_spawn");
+				const auto *name = get_property(&entity, "targetname");
+				if(name && *name) {
+					targets.emplace(name, index + (spawn ? 1 : 0));
+				}
+
+				index += spawn ? 2 : 1;
 			}
 		}
-	}
 
-	printf("NODscene: validated %zu entities; applied %zu property edits; NIL geometry preserved\n", expected.count,
-		   change_count);
-	is_successful = 1;
-cleanup:
+		size_t change_count = 0;
+		for(size_t i = 0; i < expected.count; ++i) {
+			const auto &before = expected.entities[i];
+			const auto identity = std::string(entity_id(&before));
+			const auto found = identities.find(identity);
+			if(found == identities.end()) {
+				if(nod::path::authoring_class(before)) {
+					continue;
+				}
+
+				return scene_error("Deletion of existing NSD/geometry/metadata entities is unsupported") != 0;
+			}
+
+			const auto &after = *found->second;
+			if(after.brush_count != before.brush_count) {
+				return scene_error("geometry edits are not supported") != 0;
+			}
+
+			for(size_t j = 0; j < before.brush_count; ++j) {
+				if(std::strcmp(after.brushes[j], before.brushes[j])) {
+					return scene_error("geometry/material/UV edits are not supported") != 0;
+				}
+			}
+
+			for(size_t j = 0; j < after.pair_count; ++j) {
+				const auto &pair = after.pairs[j];
+				const std::string key = pair.key;
+				const bool environment_key = nod::imported::optional_key(key) &&
+											 key.compare(0, 11, "nod_script_") != 0 &&
+											 key.compare(0, 10, "nod_frame_") != 0;
+				if(!get_property(&before, pair.key) && !(identity == "worldspawn" && environment_key)) {
+					return scene_error(("Unexpected property: " + std::string(pair.key)).c_str()) != 0;
+				}
+			}
+
+			for(size_t j = 0; j < before.pair_count; ++j) {
+				const auto &pair = before.pairs[j];
+				if(nod::imported::optional_key(pair.key)) {
+					continue;
+				}
+
+				const auto *value = get_property(&after, pair.key);
+				if(!value) {
+					return scene_error(("Required property missing: " + std::string(pair.key)).c_str()) != 0;
+				}
+
+				if(std::strcmp(value, pair.value)) {
+					if(!is_editable(&before, pair.key) ||
+					   (!std::strcmp(pair.key, "nod_prop_15") && get_property(&before, "nod_script_authoring"))) {
+						fprintf(stderr, "NODscene: read-only property '%s' changed on '%s'\n", pair.key, identity.c_str());
+						return false;
+					}
+
+					// Topology is rebuilt after validation; source indices must not
+					// be patched before translating them to immutable waypoint IDs.
+					if(std::strcmp(get_property(&before, "classname"), "nod_npd_link") &&
+					   !patch_property(sources, &before, pair.key, value)) {
+						return false;
+					}
+
+					++change_count;
+				}
+			}
+		}
+
+		std::vector<uint8_t> nsd(sources[SOURCE_NSD].data, sources[SOURCE_NSD].data + sources[SOURCE_NSD].size);
+		std::vector<nod::imported::Splice> splices;
+		for(uint32_t i = 0; i < scene.entity_array_count; ++i) {
+			const auto &native = scene.entities[i];
+			const auto identity = "nsd:" + std::to_string(native.block_offset);
+			const auto &entity = *identities.at(identity);
+			nod::imported::Fields fields;
+			nod::imported::script_fields(parser, native, fields);
+			const auto *target = get_property(&entity, "nod_script_param_16");
+			const auto receiver = target ? targets.find(target) : targets.end();
+			const auto original_target = fields.find("nod_script_param_16");
+			if(action_scripts.count(i) && target &&
+			   original_target != fields.end() && original_target->second != target &&
+			   receiver != targets.end() && ai_paths.count(receiver->second)) {
+				return scene_error("Connect an imported cAIFightPath through a start/stop pulse relay, not directly") != 0;
+			}
+
+			if(!nod::imported::patch_script(parser, native, entity, fields, targets, nsd, splices, error)) {
+				return scene_error((identity + ": " + error).c_str()) != 0;
+			}
+		}
+
+		nod::imported::Fields environment;
+		nod::imported::environment_fields(parser, environment);
+		if(!nod::imported::patch_environment(parser, *identities.at("worldspawn"), environment, nsd, error)) {
+			return scene_error(error.c_str()) != 0;
+		}
+
+		std::vector<uint8_t> npd;
+		const Blob original_npd{const_cast<unsigned char *>(original_npd_bytes.data()), original_npd_bytes.size()};
+		if(!nod::imported::rebuild_navigation(actual, expected, original_npd, npd, error)) {
+			return scene_error(error.c_str()) != 0;
+		}
+
+		// If topology stayed unchanged, retain the original adjacency order and
+		// apply only legacy link field edits without rebuilding opaque fields.
+		if(npd.empty()) {
+			for(const auto &entry : identities) {
+				if(entry.first.compare(0, 5, "link:") != 0) {
+					continue;
+				}
+
+				for(const auto *key : {"nod_from", "nod_to", "nod_cost"}) {
+					if(!patch_property(sources, entry.second, key, get_property(entry.second, key))) {
+						return false;
+					}
+				}
+			}
+		}
+
+		if(!records.empty()) {
+			size_t insertion = 0;
+			if(!nod::imported::record_insertion_offset(parser, insertion)) {
+				return scene_error("Appending records requires a verified NSD object/trailer boundary") != 0;
+			}
+
+			nod::imported::Splice append{insertion, 0, {}};
+			for(const auto &record : records) {
+				append.bytes.insert(append.bytes.end(), record.begin(), record.end());
+			}
+
+			splices.push_back(std::move(append));
+			put32(nsd.data() + scene.object_data_offset - 4, scene.entity_array_count + static_cast<uint32_t>(records.size()));
+		}
+
+		std::sort(splices.begin(), splices.end(),
+				  [](const nod::imported::Splice &a, const nod::imported::Splice &b) { return a.offset > b.offset; });
+		for(const auto &splice : splices) {
+			nsd.erase(nsd.begin() + splice.offset, nsd.begin() + splice.offset + splice.size);
+			nsd.insert(nsd.begin() + splice.offset, splice.bytes.begin(), splice.bytes.end());
+		}
+
+		NSDParser check;
+		if(!check.parseBuffer(nsd.data(), nsd.size()) || check.getSceneData().entity_array_count != index) {
+			return scene_error("Edited NSD failed parser cross-check") != 0;
+		}
+
+		const auto publish = [](Blob &source, const std::vector<uint8_t> &bytes) {
+			auto *data = static_cast<unsigned char *>(realloc(source.data, bytes.size()));
+			if(!data) {
+				return false;
+			}
+
+			source.data = data;
+			source.size = bytes.size();
+			std::memcpy(source.data, bytes.data(), bytes.size());
+			return true;
+		};
+		if(!publish(sources[SOURCE_NSD], nsd) || (!npd.empty() && !publish(sources[SOURCE_NPD], npd))) {
+			return scene_error("Out of memory publishing authored records") != 0;
+		}
+
+		printf("NODscene: validated %zu imported entities; applied %zu property edits; appended %zu native records; NIL preserved\n",
+			   expected.count, change_count, records.size());
+		return true;
+	}();
+
 	free(baseline.data);
 	free_map(&actual);
 	free_map(&expected);
-	return is_successful;
+	return successful ? 1 : 0;
 }
 
 /*
  */
 int compile_scene(char **arguments) {
 	Scene scene;
-	if(!load_scene(&scene, arguments[2], arguments[3])) {
+	const auto workspace = arguments[7] ? std::filesystem::u8path(arguments[7]) : std::filesystem::path{};
+	const auto assets = arguments[7] ? std::filesystem::u8path(arguments[8]) : std::filesystem::path{};
+	if(!load_scene(&scene, arguments[2], arguments[3], workspace, assets)) {
 		return EXIT_FAILURE;
 	}
 

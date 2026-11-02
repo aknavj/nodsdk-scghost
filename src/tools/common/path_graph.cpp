@@ -8,7 +8,7 @@ StaRev - Starcraft Ghost reversed
 This file is part of the StaRev source code.
 
 File: path_graph.cpp
-Version: 0.6.7
+Version: 0.6.8
 
 StaRev is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License version 3
@@ -155,6 +155,7 @@ bool compile(const nod_scene::Map &map, Graph &out, std::string &error) {
 			uint32_t from  = 0;
 			uint32_t to	   = 0;
 			uint32_t flags = 0;
+
 			if(!number(property(entity, "nod_from"), 65534, from)) {
 				return fail("Expected nod_from waypoint ID in 0..65534 (canonical decimal integer)");
 			}

@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "scene_bridge.h"
+#include "nod_imported.h"
 #include "niltomap.h"
 #include "nod_assets.h"
 #include "tool_common.h"
@@ -500,6 +501,15 @@ int nsd_entities(FILE *file, const Blob *source, size_t *entity_count, const Map
 			}
 		}
 
+		nod::imported::Fields script_fields;
+		if(nod::imported::script_fields(parser, native_entity, script_fields)) {
+			for(const auto &field : script_fields) {
+				if(!write_key(file, field.first.c_str(), field.second.c_str())) {
+					return 0;
+				}
+			}
+		}
+
 		if(binding) {
 			for(size_t j = 0; j < binding->pair_count; ++j) {
 				const Pair *pair = &binding->pairs[j];
@@ -725,6 +735,37 @@ int scene_map(const Blob sources[SOURCE_COUNT], Blob *map, const Map *bindings, 
 	}
 
 	is_successful = read_stream(map_stream, map);
+	if(is_successful) {
+		NSDParser parser;
+		nod::imported::Fields fields;
+		if(parser.parseBuffer(sources[SOURCE_NSD].data, sources[SOURCE_NSD].size) &&
+		   nod::imported::environment_fields(parser, fields)) {
+			const std::string marker = "\"classname\" \"worldspawn\"\n";
+			std::string output(reinterpret_cast<const char *>(map->data), map->size);
+			const auto position = output.find(marker);
+			if(position == std::string::npos) {
+				is_successful = scene_error("Cannot locate exported worldspawn environment");
+				goto cleanup;
+			}
+
+			std::string additions;
+			for(const auto &field : fields) {
+				additions += "\"" + field.first + "\" \"" + field.second + "\"\n";
+			}
+
+			output.insert(position + marker.size(), additions);
+			auto *expanded = static_cast<unsigned char *>(realloc(map->data, output.size()));
+			if(!expanded) {
+				is_successful = scene_error("Out of memory exporting environment");
+				goto cleanup;
+			}
+
+			map->data = expanded;
+			map->size = output.size();
+			std::memcpy(map->data, output.data(), output.size());
+		}
+	}
+
 	if(is_successful) {
 		printf("NODscene: exposed %zu tagged NSD entities and %zu native-space NPD waypoints\n", nsd_count, npd_count);
 	}
@@ -1586,7 +1627,8 @@ Scene::~Scene() {
 
 /*
  */
-int load_scene(Scene *scene, const char *map_path, const char *archive_path) {
+int load_scene(Scene *scene, const char *map_path, const char *archive_path,
+			   const std::filesystem::path &workspace, const std::filesystem::path &assets) {
 	if(!load(map_path, &scene->map) || !load(archive_path, &scene->archive) ||
 	   !archive_read(&scene->archive, scene->sources, &scene->binding_text, &scene->geometry)) {
 		return 0;
@@ -1598,7 +1640,7 @@ int load_scene(Scene *scene, const char *map_path, const char *archive_path) {
 	}
 
 	return compile_map(&scene->map, scene->sources, scene->binding_text.size ? &scene->bindings : nullptr,
-					   scene->geometry);
+					   scene->geometry, workspace, assets);
 }
 
 } // namespace nod_scene

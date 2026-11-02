@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "metadata_xml.h"
 #include "template_edit.h"
 #include "tool_help.h"
+#include "../common/nod_script.h"
 #include <map>
 #include <algorithm>
 #include <iostream>
@@ -300,6 +301,23 @@ int main(int argc, char **argv) {
 						<< (enabled ? "1" : "0") << "\" problem=\"" << xml(issue) << "\"/>\n";
 				}
 			}
+			if(problem.empty()) {
+				for(const auto *handler : {"cTriggerOnAction", "cSoundStinger", "cAIFightPath", "cTriggerRelay",
+										  "cButton", "cDoorMove"}) {
+					const auto fields = nod::script::defaults(name, handler, type == 2 && !model.empty());
+					if(fields.empty()) {
+						continue;
+					}
+
+					output << "<handler name=\"" << handler << "\">\n";
+					for(const auto &field : fields) {
+						output << "<field key=\"" << xml(field.first) << "\" value=\"" << xml(field.second) << "\"/>\n";
+					}
+
+					output << "</handler>\n";
+				}
+			}
+
 			output << "</template>\n";
 		}
 	}
