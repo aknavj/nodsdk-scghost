@@ -394,8 +394,8 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 	sector.value_size = 32;
 	if(expected_type == 3) {
 		const std::string handler = property(&entity, "nod_prop_15");
-		if(handler != "cRegionTrigger" || !*property(&entity, "nod_script_authoring")) {
-			error = "New regions require the verified cRegionTrigger schema";
+		if(!nod::script::defaults(handler).count("nod_region_min") || !*property(&entity, "nod_script_authoring")) {
+			error = "New regions require a verified SDK region handler schema";
 			return false;
 		}
 
@@ -558,7 +558,9 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 		}
 	}
 
-	const bool mover = !std::strcmp(property(&entity, "nod_prop_15"), "cDoorMove");
+	const std::string handler = property(&entity, "nod_prop_15");
+	const bool rotation_mover = handler == "cObjectRotate";
+	const bool mover = handler == "cDoorMove" || handler == "cObjectMove" || rotation_mover;
 	const auto *model = find(resolved, 4);
 	const bool modeled = expected_type == 2 && model && model->value[0];
 	if(mover) {
@@ -588,7 +590,7 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 		}
 
 		float endpoints[2][3], frame_rotation[3];
-		for(unsigned i = 0; i < 2; ++i) {
+		for(unsigned i = 0; i < (rotation_mover ? 1u : 2u); ++i) {
 			const auto suffix = std::to_string(i);
 			if(!nod_scene::float_vector(property(&entity, ("nod_frame_origin_" + suffix).c_str()), endpoints[i]) ||
 			   !nod_scene::float_vector(property(&entity, ("nod_frame_rotation_" + suffix).c_str()), frame_rotation)) {
@@ -596,7 +598,7 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 				return false;
 			}
 
-			for(unsigned axis = 0; axis < 3; ++axis) {
+			for(unsigned axis = 0; axis < 3 && !rotation_mover; ++axis) {
 				if((i == 0 && std::fabs(endpoints[i][axis] - position[axis]) > 0.0001f) ||
 				   std::fabs(frame_rotation[axis] - rotation[axis]) > 0.0001f) {
 					error = "Mover stop 0 must match its origin; both frame rotations must match its native orientation";
@@ -605,28 +607,42 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 			}
 		}
 
-		double distance_squared = 0;
-		for(unsigned axis = 0; axis < 3; ++axis) {
-			const double delta = double(endpoints[1][axis]) - endpoints[0][axis];
-			distance_squared += delta * delta;
-		}
+		if(rotation_mover) {
+			const double angle_squared = double(frame_rotation[0]) * frame_rotation[0] +
+				double(frame_rotation[1]) * frame_rotation[1] + double(frame_rotation[2]) * frame_rotation[2];
+			float speed;
+			if(!nod_scene::parse_float(property(&entity, "nod_script_param_1"), &speed) || speed <= 0 ||
+			   angle_squared < 0.000001 || angle_squared > std::numeric_limits<float>::max() ||
+			   !std::isfinite(speed / std::sqrt(static_cast<float>(angle_squared))) ||
+			   speed / std::sqrt(static_cast<float>(angle_squared)) <= 0) {
+				error = "Pivot rotation requires a finite nonzero native degree vector";
+				return false;
+			}
+		} else {
+			double distance_squared = 0;
+			for(unsigned axis = 0; axis < 3; ++axis) {
+				const double delta = double(endpoints[1][axis]) - endpoints[0][axis];
+				distance_squared += delta * delta;
+			}
 
-		if(distance_squared < 0.000001) {
-			error = "Mover stops must be at least 0.001 world units apart";
-			return false;
-		}
+			if(distance_squared < 0.000001) {
+				error = "Mover stops must be at least 0.001 world units apart";
+				return false;
+			}
 
-		float speed;
-		if(!nod_scene::parse_float(property(&entity, "nod_script_param_1"), &speed) || speed <= 0) {
-			error = "Mover speed must be finite and positive";
-			return false;
-		}
+			float speed;
+			if(!nod_scene::parse_float(property(&entity, handler == "cObjectMove" ? "nod_script_param_2" :
+																			  "nod_script_param_1"), &speed) || speed <= 0) {
+				error = "Mover speed must be finite and positive";
+				return false;
+			}
 
-		const float distance = std::sqrt(static_cast<float>(distance_squared));
-		const float rate = speed / distance;
-		if(distance_squared > std::numeric_limits<float>::max() || !std::isfinite(rate) || rate <= 0) {
-			error = "Mover distance/speed overflow or underflow the native float tracker";
-			return false;
+			const float distance = std::sqrt(static_cast<float>(distance_squared));
+			const float rate = speed / distance;
+			if(distance_squared > std::numeric_limits<float>::max() || !std::isfinite(rate) || rate <= 0) {
+				error = "Mover distance/speed overflow or underflow the native float tracker";
+				return false;
+			}
 		}
 	}
 

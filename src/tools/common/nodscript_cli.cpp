@@ -420,8 +420,25 @@ int main(int argc, char **argv) {
 		std::cerr << "NODScript: no NOT catalog supplied; template compatibility must be validated by MAPtoNSD/NODscene.\n";
 	}
 
-	const bool valid = nod::script::compile(expanded, static_cast<uint32_t>(imported.size()), imported, records, error,
-										  assets.empty() ? nullptr : &templates);
+	const auto imported_count = static_cast<uint32_t>(imported.size());
+	uint32_t first_preset = imported_count;
+	for(size_t i = 0; i < expanded.count; ++i) {
+		if(nod::script::template_class(expanded.entities[i])) {
+			++first_preset;
+		}
+	}
+
+	const bool targets_valid = nod::script::targets(expanded, imported_count, imported, error);
+	for(auto target = imported.begin(); target != imported.end();) {
+		if(target->second >= first_preset) {
+			target = imported.erase(target);
+		} else {
+			++target;
+		}
+	}
+
+	const bool valid = targets_valid && nod::script::compile(expanded, first_preset, imported, records, error,
+														   assets.empty() ? nullptr : &templates);
 	nod_scene::free_map(&expanded);
 	if(!valid) {
 		size_t index = first;

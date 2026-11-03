@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "nod_imported.h"
+#include "nod_script.h"
 #include "path_graph.h"
 #include "NPDParser.h"
 #include <algorithm>
@@ -246,8 +247,21 @@ bool script_fields(const NSDParser &parser, const NSDParser::SceneEntity &entity
 
 	Body body;
 	std::vector<NODModifier> modifiers;
-	if(!decode(parser, entity, body) || !parser.getModifiers(entity, modifiers) || modifiers.size() < 5 ||
-	   !std::any_of(modifiers.begin() + 4, modifiers.end(), [](const NODModifier &value) { return value.prop_id == 15; })) {
+	if(!decode(parser, entity, body) || !parser.getModifiers(entity, modifiers) || modifiers.size() < 4) {
+		return false;
+	}
+
+	bool region_handler = false;
+	std::string handler;
+	if(modifiers[3].prop_id == 15) {
+		if(nodModifierString(modifiers[3], handler)) {
+			const auto definition = script::behavior(handler);
+			region_handler = definition.count("geometry") && definition.at("geometry") == "region";
+		}
+	}
+
+	if(!region_handler && !std::any_of(modifiers.begin() + 4, modifiers.end(),
+									[](const NODModifier &value) { return value.prop_id == 15; })) {
 		return false;
 	}
 
@@ -277,6 +291,9 @@ bool script_fields(const NSDParser &parser, const NSDParser::SceneEntity &entity
 			} else {
 				return false;
 			}
+		} else if((handler == "cRegionSound" || handler == "cRegionSave") &&
+				  i == 0 && slot.kind == 1 && value == UINT32_MAX) {
+			rendered = "-1";
 		} else {
 			rendered = std::to_string(value);
 		}
@@ -416,6 +433,31 @@ bool patch_script(const NSDParser &parser, const NSDParser::SceneEntity &entity,
 		}
 	}
 
+	const bool fog_control = std::strcmp(property(actual, "nod_prop_15"), "cFogSet") == 0;
+	const std::string control = property(actual, "nod_prop_15");
+	const bool native_control = script::control_handler(control);
+	if(native_control &&
+	   ((control == "cObjectExplosion" && (changed(actual, baseline, "nod_script_param_0") ||
+										 changed(actual, baseline, "nod_script_param_1"))) ||
+		(control == "cPopupConversation" && [&]() {
+			for(unsigned i = 2; i < 10; ++i) {
+				if(changed(actual, baseline, "nod_script_param_" + std::to_string(i))) {
+					return true;
+				}
+			}
+
+			return false;
+		}())) && !script::control_body(actual, error)) {
+		return false;
+	}
+
+	if(fog_control && (changed(actual, baseline, "nod_script_param_1") ||
+					   changed(actual, baseline, "nod_script_param_5") ||
+					   changed(actual, baseline, "nod_script_param_6")) &&
+	   !script::fog_distances(actual, error)) {
+		return false;
+	}
+
 	for(size_t i = 0; i < body.parameters.size(); ++i) {
 		const auto key = "nod_script_param_" + std::to_string(i);
 		const std::string value = property(actual, key.c_str());
@@ -424,7 +466,40 @@ bool patch_script(const NSDParser &parser, const NSDParser::SceneEntity &entity,
 		}
 
 		const auto &slot = body.parameters[i];
+		if(native_control && !script::control_parameter(control, static_cast<unsigned>(i), value, error)) {
+			return false;
+		}
+
+		const bool damage_region = std::strcmp(property(actual, "nod_prop_15"), "cRegionDamage") == 0;
+		const bool sound_loop = std::strcmp(property(actual, "nod_prop_15"), "cSoundLoop") == 0;
+		if(sound_loop && i > 0) {
+			error = key + ": unused native loop fields are read-only; unchanged legacy values are preserved";
+			return false;
+		}
+
+		if(damage_region && (i == 5 || i == 6)) {
+			error = key + ": native damage modifiers are read-only; unchanged legacy values are preserved";
+			return false;
+		}
+
 		if(slot.kind == 7) {
+			if(sound_loop && i == 0 && !script::cue_reference(value)) {
+				error = key + ": expected a deployed loop cue (at most 31 ASCII characters, no path)";
+				return false;
+			}
+
+			if(i == 1 && std::strcmp(property(actual, "nod_prop_15"), "cRegionSound") == 0 &&
+			   !value.empty() && !script::cue_reference(value)) {
+				error = key + ": expected an optional deployed ambient cue (at most 31 ASCII characters, no path)";
+				return false;
+			}
+
+			if(i == 0 && std::strcmp(property(actual, "nod_prop_15"), "cCutscenePlay") == 0 &&
+			   std::strcmp(property(actual, "nod_script_param_3"), "0") == 0 && !script::cutscene_reference(value)) {
+				error = key + ": expected a deployed NCS cutscene name without a path (at most 31 ASCII characters)";
+				return false;
+			}
+
 			if(value.size() >= nod_scene::map_value_capacity ||
 			   !std::all_of(value.begin(), value.end(), [](unsigned char c) { return c >= 32 && c <= 126 && c != '"'; })) {
 				error = key + ": expected printable ASCII";
@@ -443,6 +518,32 @@ bool patch_script(const NSDParser &parser, const NSDParser::SceneEntity &entity,
 				return false;
 			}
 
+			if(i < 2 && std::strcmp(property(actual, "nod_prop_15"), "cTimerTrigger") == 0) {
+				const auto info = script::field_info("cTimerTrigger", key);
+				if(number < std::stof(info.at("min")) || number > std::stof(info.at("max"))) {
+					error = key + ": expected a timer interval from " + info.at("min") + " to " +
+							info.at("max") + " seconds";
+					return false;
+				}
+			}
+
+			if(damage_region) {
+				const auto info = script::field_info("cRegionDamage", key);
+				if(number < 0 || (info.count("max") && number > std::stof(info.at("max")))) {
+					error = key + (i == 0 ? ": expected finite nonnegative damage" :
+										  ": expected phase seconds from 0 to 599.899");
+					return false;
+				}
+			}
+
+			if(fog_control) {
+				const auto info = script::field_info("cFogSet", key);
+				if(number < 0 || (info.count("max") && number > std::stof(info.at("max")))) {
+					error = key + ": expected a finite nonnegative fog value; transition maximum is 599.999 seconds";
+					return false;
+				}
+			}
+
 			put_float(bytes.data() + slot.offset, number);
 		} else {
 			uint32_t number = 0;
@@ -454,6 +555,33 @@ bool patch_script(const NSDParser &parser, const NSDParser::SceneEntity &entity,
 					number = found->second;
 				} else {
 					error = key + ": dangling target (use a symbolic target or -1/-2)";
+					return false;
+				}
+			} else if(fog_control && slot.kind == 1) {
+				const auto info = script::field_info("cFogSet", key);
+				if(!canonical(value.c_str(), static_cast<uint32_t>(std::stoul(info.at("max"))), number) ||
+				   number < std::stoul(info.at("min"))) {
+					error = key + ": expected a canonical integer from " + info.at("min") + " to " + info.at("max");
+					return false;
+				}
+			} else if(i == 0 && slot.kind == 1 &&
+					  std::strcmp(property(actual, "nod_prop_15"), "cRegionSound") == 0) {
+				if(!script::reverb_parameter(value, number)) {
+					error = key + ": expected -1 (unchanged) or a canonical reverb preset 0..25";
+					return false;
+				}
+			} else if(i == 0 && slot.kind == 1 &&
+					  std::strcmp(property(actual, "nod_prop_15"), "cRegionSave") == 0) {
+				if(!script::save_marker_parameter(value, number)) {
+					error = key + ": expected -1 (no marker registration) or a canonical objective marker 0..15";
+					return false;
+				}
+			} else if(slot.kind == 1 &&
+					  ((i == 1 && (std::strcmp(property(actual, "nod_prop_15"), "cRegionSave") == 0 ||
+								   std::strcmp(property(actual, "nod_prop_15"), "cRegionStealth") == 0)) ||
+					   (damage_region && (i == 1 || i == 4 || i == 7)))) {
+				if(!canonical(value.c_str(), 1, number)) {
+					error = key + ": expected 0 or 1";
 					return false;
 				}
 			} else if(!canonical(value.c_str(), UINT32_MAX, number)) {

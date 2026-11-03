@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "nod_script.h"
 #include "nod_assets.h"
+#include "tool_cli.h"
 #include "NOTDatabase.h"
 #include <algorithm>
 #include <array>
@@ -479,8 +480,21 @@ bool body_key(const std::string &key) {
  */
 const std::vector<std::string> &handlers() {
 	static const std::vector<std::string> names{
-		"cTriggerOnAction", "cSoundStinger", "cAIFightPath", "cTriggerRelay", "cButton", "cDoorMove", "cRegionTrigger"};
+		"cTriggerOnAction", "cSoundStinger", "cAIFightPath", "cTriggerRelay", "cButton", "cDoorMove", "cRegionTrigger",
+		"cObjectiveUpdate", "cCutscenePlay", "cTimerTrigger", "cRegionSound", "cRegionSave", "cRegionStealth",
+		"cRegionKillZerg", "cRegionDamage", "cFogSet", "cSoundLoop",
+		"cParticleToggle", "cEffectAdd", "cObjectExplosion", "cRain", "cObjectMove", "cObjectRotate",
+		"cObjectSetCollision", "cObjectSetColor", "cObjectRemove", "cPhysicsActivate",
+		"cHelpText", "cPopupConversation", "cMissionNext", "cLevelChange"};
 	return names;
+}
+
+bool control_handler(const std::string &handler) {
+	static const std::set<std::string> names{
+		"cParticleToggle", "cEffectAdd", "cObjectExplosion", "cRain", "cObjectMove", "cObjectRotate",
+		"cObjectSetCollision", "cObjectSetColor", "cObjectRemove", "cPhysicsActivate",
+		"cHelpText", "cPopupConversation", "cMissionNext", "cLevelChange"};
+	return names.count(handler) != 0;
 }
 
 namespace {
@@ -509,6 +523,15 @@ bool native_string(const std::vector<NOTParser::ResolvedProperty> &properties, u
 	std::string text;
 	const auto *property = resolved_property(properties, id);
 	return property && nodModifierString(*property, text) && !text.empty();
+}
+
+bool optional_index_parameter(const std::string &value, uint32_t maximum, uint32_t &number) {
+	if(value == "-1") {
+		number = UINT32_MAX;
+		return true;
+	}
+
+	return nod_scene::parse_unsigned_integer(value.c_str(), maximum, &number) && std::to_string(number) == value;
 }
 }
 
@@ -539,6 +562,41 @@ bool actor_template(const NOTDatabase &templates, const std::string &name, std::
 	return true;
 }
 
+bool cutscene_reference(const std::string &value) {
+	const auto dot = value.find('.');
+	return !value.empty() && value.size() <= 31 && dot != 0 &&
+		   value.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.") == std::string::npos &&
+		   (dot == std::string::npos || NodTools::lower_ascii(value.substr(dot)) == ".ncs");
+}
+
+bool cue_reference(const std::string &value) {
+	return !value.empty() && value.size() <= 31 && value.front() != '.' && value.back() != '.' &&
+		   value.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.") == std::string::npos;
+}
+
+bool reverb_parameter(const std::string &value, uint32_t &number) {
+	return optional_index_parameter(value, 25, number);
+}
+
+bool save_marker_parameter(const std::string &value, uint32_t &number) {
+	return optional_index_parameter(value, 15, number);
+}
+
+bool fog_distances(const nod_scene::Entity &entity, std::string &error) {
+	if(std::strcmp(property(entity, "nod_script_param_1"), "1") != 0) {
+		return true;
+	}
+
+	float start, end;
+	if(!nod_scene::parse_float(property(entity, "nod_script_param_5"), &start) || start < 0 ||
+	   !nod_scene::parse_float(property(entity, "nod_script_param_6"), &end) || end <= start) {
+		error = "cFogSet: linear fog requires finite distances with 0 <= start < end in binary32";
+		return false;
+	}
+
+	return true;
+}
+
 bool compatible(const std::string &handler, const std::vector<NOTParser::ResolvedProperty> &properties) {
 	uint32_t type, flags = 0, collision = 0;
 	if(!native_integer(properties, 20, type)) {
@@ -546,7 +604,8 @@ bool compatible(const std::string &handler, const std::vector<NOTParser::Resolve
 	}
 
 	if(type == 3) {
-		return handler == "cRegionTrigger";
+		const auto definition = behavior(handler);
+		return definition.count("geometry") && definition.at("geometry") == "region";
 	}
 
 	if(type != 2) {
@@ -561,17 +620,71 @@ bool compatible(const std::string &handler, const std::vector<NOTParser::Resolve
 		return modeled && (flags & 4) != 0;
 	}
 
-	if(handler == "cDoorMove") {
+	if(handler == "cDoorMove" || handler == "cObjectSetCollision") {
 		return modeled && has_collision && collision != 0;
 	}
 
+	if(handler == "cObjectMove" || handler == "cObjectRotate" || handler == "cObjectSetColor") {
+		return modeled;
+	}
+
+	if(handler == "cPhysicsActivate") {
+		uint32_t movement = 0;
+		return modeled && has_collision && collision != 0 && native_integer(properties, 45, movement) && movement == 3;
+	}
+
+	if(handler == "cParticleToggle") {
+		return !modeled && has_collision && collision == 0 && native_string(properties, 10);
+	}
+
 	return !modeled && has_collision && collision == 0 &&
-		   (handler == "cSoundStinger" || handler == "cAIFightPath" || handler == "cTriggerRelay");
+		   (handler == "cSoundStinger" || handler == "cAIFightPath" || handler == "cTriggerRelay" ||
+			handler == "cCutscenePlay" || handler == "cTimerTrigger" || handler == "cFogSet" ||
+			handler == "cSoundLoop" || handler == "cEffectAdd" || handler == "cObjectExplosion" ||
+			handler == "cRain" || handler == "cObjectRemove" || handler == "cHelpText" ||
+			handler == "cPopupConversation" || handler == "cMissionNext");
 }
 
 Fields behavior(const std::string &handler) {
+	if(handler == "cPopupConversation") {
+		return {{"geometry", "region"}, {"input", "trigger"}, {"first", "10"}, {"count", "1"}, {"stride", "1"}};
+	}
+
+	if(handler == "cLevelChange" || handler == "cMissionNext") {
+		return {{"geometry", "region"}, {"input", "trigger"}};
+	}
+
+	if(handler == "cObjectMove") {
+		return {{"input", "trigger"}, {"frame-step", "0 2 0"}, {"frame-orientation", "owner"}};
+	}
+
+	if(control_handler(handler)) {
+		return {{"input", "trigger"}};
+	}
+
+	if(handler == "cRegionSave" || handler == "cRegionStealth" || handler == "cRegionDamage" ||
+	   handler == "cFogSet") {
+		return {{"geometry", "region"}, {"input", "trigger"}};
+	}
+
+	if(handler == "cRegionSound" || handler == "cRegionKillZerg") {
+		return {{"geometry", "region"}, {"input", "none"}};
+	}
+
+	if(handler == "cTimerTrigger") {
+		return {{"input", "none"}, {"first", "2"}, {"count", "8"}, {"stride", "1"}};
+	}
+
 	if(handler == "cRegionTrigger") {
-		return {{"input", "trigger"}, {"first", "1"}, {"count", "8"}, {"stride", "1"}};
+		return {{"geometry", "region"}, {"input", "trigger"}, {"first", "1"}, {"count", "8"}, {"stride", "1"}};
+	}
+
+	if(handler == "cObjectiveUpdate") {
+		return {{"geometry", "region"}, {"input", "trigger"}, {"first", "6"}, {"count", "1"}, {"stride", "1"}};
+	}
+
+	if(handler == "cCutscenePlay") {
+		return {{"geometry", "region"}, {"input", "trigger"}, {"first", "14"}, {"count", "1"}, {"stride", "1"}};
 	}
 
 	if(handler == "cTriggerOnAction") {
@@ -596,20 +709,59 @@ Fields behavior(const std::string &handler) {
 		return {{"input", "trigger"}, {"frame-step", "0 0 2"}, {"frame-orientation", "owner"}};
 	}
 
-	if(handler == "cSoundStinger") {
+	if(handler == "cSoundStinger" || handler == "cSoundLoop") {
 		return {{"input", "trigger"}};
 	}
 
 	return {};
 }
 
-Fields defaults(const std::string &handler) {
+Fields defaults(const std::string &handler, uint32_t owner_type) {
 	Parameters values;
 	uint32_t frames = 0;
 	if(handler == "cTriggerOnAction") {
 		values = action(empty_guid);
 	} else if(handler == "cSoundStinger") {
 		values = sound("");
+	} else if(handler == "cSoundLoop") {
+		values = {Parameter(std::string()), {2, 0x40a00000}, {2, 0x41200000}, {2, 0x3f800000}};
+	} else if(handler == "cParticleToggle") {
+		values = {{1, 0}, {2, 0}};
+	} else if(handler == "cEffectAdd") {
+		values = {Parameter(std::string()), {1, 0}, {2, 0}};
+	} else if(handler == "cObjectExplosion") {
+		values = {{2, 0x40a00000}, {2, 0x41700000}, {1, 1}, Parameter(std::string("exp_dirt"))};
+	} else if(handler == "cRain") {
+		values = {{2, 0x3f800000}, {2, 0}, {2, 0}, {1, 0}};
+	} else if(handler == "cObjectMove") {
+		values = {{1, 1}, {2, 0x3dcccccd}, {2, 0x40000000}, {2, 0x3f800000},
+				  {1, 0}, {1, 0}, {1, 0}};
+		values.insert(values.end(), 4, Parameter(3, empty_guid));
+		values.emplace_back(1, UINT32_MAX);
+		frames = 2;
+	} else if(handler == "cObjectRotate") {
+		values = {{1, 0}, {2, 0x42340000}, {2, 0}, {2, 0}, {2, 0}, {2, 0x3f800000},
+				  {1, 0}, {1, 0}, {1, 0}};
+		values.insert(values.end(), 4, Parameter(3, empty_guid));
+		values.emplace_back(1, 0);
+		frames = 1;
+	} else if(handler == "cObjectSetCollision") {
+		values = {{1, 1}, {1, 1}, {2, 0}, {2, 0}, {2, 0}};
+	} else if(handler == "cObjectSetColor") {
+		values = {Parameter(std::string()), {1, 0}, {1, 1}};
+	} else if(handler == "cObjectRemove") {
+		values.assign(8, Parameter(3, empty_guid));
+	} else if(handler == "cPhysicsActivate") {
+		values = {{1, 1}, {1, 1}};
+	} else if(handler == "cHelpText") {
+		values = {Parameter(std::string())};
+	} else if(handler == "cPopupConversation") {
+		values.assign(10, Parameter(std::string()));
+		values.emplace_back(3, empty_guid);
+	} else if(handler == "cMissionNext") {
+		values = {{2, 0}};
+	} else if(handler == "cLevelChange") {
+		values = {Parameter(std::string()), {1, 0}, {1, 1}, {1, 0}};
 	} else if(handler == "cAIFightPath") {
 		Placement placement{};
 		values = spawn(placement);
@@ -648,6 +800,33 @@ Fields defaults(const std::string &handler) {
 		}
 
 		values.insert(values.end(), {{1, 1}, {1, 0}, {1, 1}, {1, 0}, {2, 0}});
+	} else if(handler == "cObjectiveUpdate") {
+		values = {{1, 1}, Parameter(std::string()), Parameter(std::string()), Parameter(std::string()),
+				  Parameter(std::string()), Parameter(std::string()), {3, empty_guid}, {3, empty_guid},
+				  {2, 0}, {3, empty_guid}, {2, 0}, {1, 0}, Parameter(std::string()), Parameter(std::string()),
+				  {1, 0}, {1, 0}, {3, empty_guid}};
+	} else if(handler == "cRegionSound") {
+		values = {{1, UINT32_MAX}, Parameter(std::string())};
+	} else if(handler == "cRegionSave") {
+		values = {{1, UINT32_MAX}, {1, 1}};
+	} else if(handler == "cRegionStealth") {
+		values = {{2, 0x3f000000}, {1, 0}};
+	} else if(handler == "cRegionKillZerg") {
+		values.assign(4, Parameter(3, empty_guid));
+	} else if(handler == "cRegionDamage") {
+		values = {{2, 0x40a00000}, {1, 1}, {2, 0}, {2, 0}, {1, 0}, {1, 0}, {1, 0}, {1, 0}};
+		values.insert(values.end(), 4, Parameter(3, empty_guid));
+	} else if(handler == "cFogSet") {
+		values = {{1, 1}, {1, 1}, {1, 45}, {1, 60}, {1, 90},
+				  {2, 0}, {2, 0x41a00000}, {2, 0x3f800000}, {1, 0}};
+	} else if(handler == "cTimerTrigger") {
+		values = {{2, 0x40a00000}, {2, 0x40a00000}};
+		values.insert(values.end(), 8, Parameter(3, empty_guid));
+	} else if(handler == "cCutscenePlay") {
+		values = {Parameter(std::string()), {1, 1}, {1, 0}, {1, 0}, {1, 0}, {1, 0}};
+		values.insert(values.end(), 9, Parameter(3, empty_guid));
+		values.emplace_back(1, 0);
+		values.insert(values.end(), 4, Parameter(3, empty_guid));
 	} else {
 		return {};
 	}
@@ -667,6 +846,8 @@ Fields defaults(const std::string &handler) {
 			std::ostringstream stream;
 			stream << std::setprecision(9) << number;
 			text = stream.str();
+		} else if((handler == "cRegionSound" || handler == "cRegionSave") && i == 0) {
+			text = "-1";
 		} else {
 			text = std::to_string(value.value);
 		}
@@ -681,7 +862,12 @@ Fields defaults(const std::string &handler) {
 		fields["nod_frame_sector_" + std::to_string(i)] = "0";
 	}
 
-	if(handler == "cRegionTrigger") {
+	if(handler == "cObjectRotate") {
+		fields["nod_frame_rotation_0"] = "0 0 90";
+	}
+
+	const auto definition = behavior(handler);
+	if(owner_type == 3 && definition.count("geometry") && definition.at("geometry") == "region") {
 		fields["nod_region_min"] = "-1 -1 0";
 		fields["nod_region_max"] = "1 1 2.4";
 	}
@@ -721,7 +907,80 @@ Fields field_info(const std::string &handler, const std::string &key) {
 			}
 		}
 
-		if(handler == "cSoundStinger" && parameter == 6) {
+		if(control_handler(handler)) {
+			static const std::map<std::string, std::vector<std::string>> labels{
+				{"cParticleToggle", {"Emitter initially enabled", "Auto-disable seconds (0: no timer)"}},
+				{"cEffectAdd", {"Effect resource", "Add on startup; triggers remove", "Triggered effect lifetime (0: no removal timer)"}},
+				{"cObjectExplosion", {"Repeat base seconds", "Repeat random additional seconds", "Initially suppress automatic explosions", "Explosion object template"}},
+				{"cRain", {"Native rainfall scalar A", "Native rainfall scalar B", "Native rainfall scalar C", "Native rainfall mode (fixed 0)"}},
+				{"cObjectMove", {"Initial destination frame (fixed 1)", "Startup delay seconds", "Translation speed (meters/second)", "Dwell seconds", "Repeat out-and-back path", "Native interpolation (fixed 0)", "Start automatically"}},
+				{"cObjectRotate", {"Pivot frame (fixed 0)", "Rotation speed (native degrees/second)", "Arrival delay (fixed 0)", "Start ramp (fixed 0)", "Stop ramp (fixed 0)", "Slow multiplier (fixed 1)", "Native interpolation (fixed 0)", "Start automatically", "Reverse on arrival"}},
+				{"cObjectSetCollision", {"Manual mode (fixed 1)", "Initially colliding and visible", "Startup offset (fixed 0)", "Enabled cycle (fixed 0)", "Disabled cycle (fixed 0)"}},
+				{"cObjectSetColor", {"Shader prefix (blank: all)", "Startup shader frame", "Triggered shader frame"}},
+				{"cPhysicsActivate", {"Pin on startup", "Unpin and activate on trigger"}},
+				{"cHelpText", {"Deployed localized help key"}},
+				{"cLevelChange", {"Deployed level basename", "Native arrival selector (fixed 0)", "Native transition flag 8", "Initially disabled"}}};
+			const auto names = labels.find(handler);
+			if(names != labels.end() && parameter < names->second.size()) {
+				info["label"] = names->second[parameter];
+			}
+
+			if(handler == "cObjectRemove") {
+				info["label"] = "Object to remove " + std::to_string(parameter + 1) + " (not an output)";
+			} else if(handler == "cPopupConversation") {
+				info["label"] = parameter < 2 ? "Portrait " + std::to_string(parameter + 1) + " (optional BIK)" :
+								parameter < 10 ? "Deployed briefing key " + std::to_string(parameter - 1) :
+								"On last briefing removed: linked target";
+			} else if(handler == "cMissionNext") {
+				info["label"] = "Next-mission delay (truncated whole seconds; below 1 uses 0.1s)";
+			}
+
+			const bool fixed = (handler == "cRain" && parameter == 3) ||
+				(handler == "cLevelChange" && parameter == 1) ||
+				(handler == "cObjectMove" && (parameter == 0 || parameter == 5 || parameter >= 7)) ||
+				(handler == "cObjectRotate" && parameter != 1 && parameter != 7 && parameter != 8) ||
+				(handler == "cObjectSetCollision" && parameter != 1);
+			if(fixed) {
+				info["editable"] = "0";
+			}
+
+			if(kind == "1") {
+				info["min"] = "0";
+				info["max"] = handler == "cObjectSetColor" || (handler == "cLevelChange" && parameter == 1) ?
+							  "2147483647" : "1";
+			} else if(kind == "2") {
+				info["max"] = "599.999";
+				if((handler == "cObjectMove" && parameter == 2) ||
+				   (handler == "cObjectRotate" && parameter == 1)) {
+					info.erase("max");
+					info["exclusive-min"] = "1";
+				} else if(handler == "cRain") {
+					info.erase("min");
+					info.erase("max");
+				} else if(handler == "cObjectExplosion" && parameter == 0) {
+					info["min"] = "0.001";
+				} else if(handler == "cObjectMove" && parameter == 1) {
+					info["max"] = "598.999";
+				}
+			} else if(kind == "7") {
+				info["resource"] = "native-resource";
+				info["allow-empty"] = handler == "cObjectSetColor" ||
+					(handler == "cPopupConversation" && parameter != 2) ? "1" : "0";
+			}
+
+			if(fixed) {
+				info.erase("min");
+				info.erase("max");
+			}
+		} else if(handler == "cSoundLoop") {
+			if(parameter == 0) {
+				info["label"] = "Loop cue (auto-start after 0.1 seconds)";
+				info["resource"] = "cue";
+			} else {
+				info["label"] = "Legacy float " + suffix + " (unused by native callbacks)";
+				info["editable"] = "0";
+			}
+		} else if(handler == "cSoundStinger" && parameter == 6) {
 			info["label"] = "Sound cue";
 			info["resource"] = "cue";
 		} else if(handler == "cAIFightPath" && parameter == 2) {
@@ -737,6 +996,94 @@ Fields field_info(const std::string &handler, const std::string &key) {
 			info["label"] = labels[parameter - 4];
 			info["min"] = "0";
 			info["max"] = "1";
+		} else if(handler == "cFogSet") {
+			static const char *labels[] = {
+				"Exit behavior (1: restore, 2: keep)", "Fog mode (0: off, 1: linear)",
+				"Fog red (0..255)", "Fog green (0..255)", "Fog blue (0..255)",
+				"Fog start distance (meters)", "Fog end distance (meters)",
+				"Fog transition seconds", "Smoke level after transition (0/1)"};
+			info["label"] = labels[parameter];
+			info["min"] = parameter == 0 ? "1" : "0";
+			if(parameter == 0) {
+				info["max"] = "2";
+			} else if(parameter == 1 || parameter == 8) {
+				info["max"] = "1";
+			} else if(parameter >= 2 && parameter <= 4) {
+				info["max"] = "255";
+			} else if(parameter == 7) {
+				info["max"] = "599.999";
+			}
+		} else if(handler == "cRegionDamage") {
+			static const char *labels[] = {
+				"Damage per tick (native)", "Damage region initially enabled",
+				"Enabled phase seconds (0: no cycle)", "Disabled phase seconds (0: no cycle)",
+				"Kill non-primary actors on entry (ignores enable gate)",
+				"Non-primary kill modifier (fixed 0)", "Damage type (fixed 0 for new regions)",
+				"Primary entry opens containers instead"};
+			info["label"] = parameter < 8 ? labels[parameter] :
+							"Container to open " + std::to_string(parameter - 7) + " (not an output)";
+			if(parameter == 5 || parameter == 6) {
+				info["editable"] = "0";
+			} else if(parameter == 1 || parameter == 4 || parameter == 7) {
+				info["min"] = "0";
+				info["max"] = "1";
+			} else if(parameter == 2 || parameter == 3) {
+				info["max"] = "599.899";
+			}
+		} else if(handler == "cRegionKillZerg") {
+			info["label"] = "Exempt actor " + std::to_string(parameter + 1) + " (not an output)";
+		} else if(handler == "cRegionSound") {
+			info["label"] = parameter == 0 ? "Region reverb preset (-1: unchanged)" :
+											"Region ambient cue (blank: unchanged)";
+			info["resource"] = parameter == 0 ? "reverb" : "ambient";
+		} else if(handler == "cRegionStealth") {
+			info["label"] = parameter == 0 ? "Location stealth value (native)" :
+											"Stealth region initially disabled";
+			if(parameter == 0) {
+				info.erase("min");
+			} else {
+				info["min"] = "0";
+				info["max"] = "1";
+			}
+		} else if(handler == "cRegionSave") {
+			info["label"] = parameter == 0 ? "Objective marker (-1: no registration)" :
+											"Checkpoint initially enabled";
+			if(parameter == 0) {
+				info["resource"] = "save-marker";
+			} else {
+				info["min"] = "0";
+				info["max"] = "1";
+			}
+		} else if(handler == "cTimerTrigger" && parameter < 2) {
+			info["label"] = parameter == 0 ? "Timer interval A (first, then alternating seconds)" :
+											"Timer interval B (alternating seconds)";
+			// Native SetTimer truncates to milliseconds and rejects delays of ten minutes or more.
+			info["min"] = "0.001";
+			info["max"] = "599.999";
+		} else if(handler == "cObjectiveUpdate") {
+			info["editable"] = parameter <= 2 || parameter == 6 ? "1" : "0";
+			if(parameter == 0) {
+				info["label"] = "Objective region initially enabled";
+				info["min"] = "0";
+				info["max"] = "1";
+			} else if(parameter == 1 || parameter == 2) {
+				info["label"] = parameter == 1 ? "Complete deployed objective (key)" : "Show deployed objective (key)";
+				info["resource"] = "objective";
+			} else if(parameter == 6) {
+				info["label"] = "On objective update: linked target";
+			}
+		} else if(handler == "cCutscenePlay") {
+			info["editable"] = parameter == 0 || parameter == 1 || parameter == 14 ? "1" : "0";
+			if(parameter == 0) {
+				info["label"] = "Deployed cutscene (NCS name)";
+				info["resource"] = "cutscene";
+			} else if(parameter == 1) {
+				info["label"] = "Cutscene one-shot";
+				info["min"] = "0";
+				info["max"] = "1";
+			} else if(parameter == 14) {
+				info["label"] = "On cutscene finish or stop: linked target";
+			}
 		} else if(handler == "cRegionTrigger") {
 			static const std::map<unsigned, std::string> labels{
 				{0, "Actor filter (0 actors / 1 player / 2 player and AI)"},
@@ -789,6 +1136,77 @@ Fields field_info(const std::string &handler, const std::string &key) {
 	return info;
 }
 
+bool control_parameter(const std::string &handler, unsigned slot, const std::string &value, std::string &error) {
+	const std::string key = "nod_script_param_" + std::to_string(slot);
+	const auto schema = defaults(handler);
+	const auto info = field_info(handler, key);
+	if(info.empty()) {
+		error = key + ": this imported slot is outside the verified native control schema";
+		return false;
+	}
+
+	if(info.at("editable") == "0") {
+		error = key + ": this field is fixed for the verified native control workflow";
+		return false;
+	}
+
+	const auto kind = schema.at("nod_script_kind_" + std::to_string(slot));
+	if(kind == "7") {
+		const bool optional = info.at("allow-empty") == "1";
+		if((!optional || !value.empty()) && !cue_reference(value)) {
+			error = key + ": expected a deployed resource/key (1..31 ASCII name characters, no path)";
+			return false;
+		}
+	} else if(kind == "2") {
+		float real;
+		if(!nod_scene::parse_float(value.c_str(), &real) ||
+		   (info.count("min") && (info.count("exclusive-min") ? real <= std::stof(info.at("min")) :
+															real < std::stof(info.at("min")))) ||
+		   (info.count("max") && real > std::stof(info.at("max")))) {
+			error = key + ": native control value is outside its finite metadata bounds";
+			return false;
+		}
+	} else if(kind == "1") {
+		uint32_t number;
+		if(!nod_scene::parse_unsigned_integer(value.c_str(), UINT32_MAX, &number) ||
+		   std::to_string(number) != value ||
+		   (info.count("max") && number > std::stoul(info.at("max")))) {
+			error = key + ": expected a canonical integer within the native control bounds";
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool control_body(const nod_scene::Entity &entity, std::string &error) {
+	const std::string handler = property(entity, "nod_prop_15");
+	if(handler == "cObjectExplosion") {
+		float base, random;
+		if(!nod_scene::parse_float(property(entity, "nod_script_param_0"), &base) ||
+		   !nod_scene::parse_float(property(entity, "nod_script_param_1"), &random) ||
+		   !std::isfinite(base + random) || base + random >= 600) {
+			error = "cObjectExplosion: base plus random interval must remain below 600 seconds in binary32";
+			return false;
+		}
+	}
+
+	if(handler == "cPopupConversation") {
+		bool gap = false;
+		for(unsigned i = 2; i < 10; ++i) {
+			const bool empty = !*property(entity, ("nod_script_param_" + std::to_string(i)).c_str());
+			if((i == 2 && empty) || (gap && !empty)) {
+				error = "cPopupConversation: supply one to eight contiguous briefing keys; no gaps";
+				return false;
+			}
+
+			gap = gap || empty;
+		}
+	}
+
+	return true;
+}
+
 bool targets(const nod_scene::Map &map, uint32_t first_index,
 			 std::map<std::string, uint32_t> &aliases, std::string &error) {
 	uint32_t index = first_index;
@@ -828,13 +1246,42 @@ bool targets(const nod_scene::Map &map, uint32_t first_index,
 	std::map<uint32_t, const nod_scene::Entity *> objects;
 	std::map<uint32_t, std::vector<uint32_t>> links;
 	std::set<uint32_t> roots;
+	size_t timers = 0, new_timers = 0;
 	for(size_t i = 0; i < map.count; ++i) {
 		const auto &entity = map.entities[i];
+		float on_phase = 0, off_phase = 0;
+		const bool cyclic_damage = std::strcmp(property(entity, "nod_prop_15"), "cRegionDamage") == 0 &&
+			nod_scene::parse_float(property(entity, "nod_script_param_2"), &on_phase) && on_phase != 0 &&
+			nod_scene::parse_float(property(entity, "nod_script_param_3"), &off_phase) && off_phase != 0;
+		const std::string handler = property(entity, "nod_prop_15");
+		const auto enabled = [&](unsigned slot) {
+			return std::strcmp(property(entity, ("nod_script_param_" + std::to_string(slot)).c_str()), "1") == 0;
+		};
+		float duration = 0;
+		const bool particle_timer = handler == "cParticleToggle" && enabled(0) &&
+			nod_scene::parse_float(property(entity, "nod_script_param_1"), &duration) && duration > 0;
+		if(handler == "cTimerTrigger" || handler == "cSoundLoop" || cyclic_damage ||
+		   handler == "cObjectSetColor" || handler == "cObjectSetCollision" || particle_timer ||
+		   (handler == "cObjectMove" && enabled(6)) || (handler == "cObjectExplosion" && !enabled(2))) {
+			++timers;
+			if(handler == "cObjectSetCollision" && !enabled(1)) {
+				++timers;
+			}
+			if(template_class(entity)) {
+				++new_timers;
+			}
+		}
+
 		const std::string name = property(entity, template_class(entity) || authoring_class(entity) ? "targetname" : "nod_id");
 		const auto found = aliases.find(name);
 		if(found != aliases.end()) {
 			objects.emplace(found->second, &entity);
 		}
+	}
+
+	if(new_timers && timers > 128) {
+		error = "Native startup controls exceed the shared 128-slot timer pool (timers, damage, loops, effects and objects)";
+		return false;
 	}
 
 	for(size_t i = 0; i < map.count; ++i) {
@@ -983,7 +1430,13 @@ bool targets(const nod_scene::Map &map, uint32_t first_index,
 bool body(const nod_scene::Entity &entity, const std::map<std::string, uint32_t> &aliases,
 		  std::vector<uint8_t> &bytes, std::string &error, const NOTDatabase &templates) {
 	const std::string handler = property(entity, "nod_prop_15");
-	const auto schema = defaults(handler);
+	uint32_t owner_type;
+	if(!nod_scene::parse_unsigned_integer(property(entity, "nod_template_type"), UINT32_MAX, &owner_type)) {
+		error = "Native handler bodies require a resolved NOT owner type";
+		return false;
+	}
+
+	const auto schema = defaults(handler, owner_type);
 	if(schema.empty() || property(entity, "nod_script_authoring") != schema.at("nod_script_authoring") ||
 	   property(entity, "nod_script_param_count") != schema.at("nod_script_param_count") ||
 	   property(entity, "nod_frame_count") != schema.at("nod_frame_count")) {
@@ -997,6 +1450,12 @@ bool body(const nod_scene::Entity &entity, const std::map<std::string, uint32_t>
 			error = "Unexpected native body field: " + key;
 			return false;
 		}
+	}
+
+	if(handler == "cObjectiveUpdate" && !*property(entity, "nod_script_param_1") &&
+	   !*property(entity, "nod_script_param_2")) {
+		error = "Objective regions require a complete or show key from the active mission's OBJECTIVE entries";
+		return false;
 	}
 
 	std::vector<uint8_t> pending;
@@ -1015,6 +1474,14 @@ bool body(const nod_scene::Entity &entity, const std::map<std::string, uint32_t>
 		frame(pending, rotation, position);
 	}
 
+	if(handler == "cFogSet" && !fog_distances(entity, error)) {
+		return false;
+	}
+
+	if(control_handler(handler) && !control_body(entity, error)) {
+		return false;
+	}
+
 	const auto count = static_cast<uint32_t>(std::stoul(schema.at("nod_script_param_count")));
 	word(pending, count);
 	for(uint32_t i = 0; i < count; ++i) {
@@ -1030,7 +1497,14 @@ bool body(const nod_scene::Entity &entity, const std::map<std::string, uint32_t>
 		const std::string value = text;
 		const auto info = field_info(handler, key);
 		if(info.at("editable") == "0" && value != schema.at(key)) {
-			error = key + ": this native setting is fixed for the verified model/button workflow";
+			error = key + (handler == "cRegionDamage" ?
+						  ": this native modifier is fixed for the verified damage-region workflow" :
+						  handler == "cSoundLoop" ? ": this unused native loop field is fixed at its shipped default" :
+						  ": this native setting is fixed for the verified model/button workflow");
+			return false;
+		}
+
+		if(control_handler(handler) && info.at("editable") != "0" && !control_parameter(handler, i, value, error)) {
 			return false;
 		}
 
@@ -1044,14 +1518,24 @@ bool body(const nod_scene::Entity &entity, const std::map<std::string, uint32_t>
 				return false;
 			}
 
-			if(info.count("resource") && info.at("resource") == "cue" &&
-			   (value.empty() || value.size() > 31 || value.front() == '.' || value.back() == '.' ||
-				value.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.") != std::string::npos)) {
+			if(info.count("resource") &&
+			   (info.at("resource") == "cue" || (info.at("resource") == "ambient" && !value.empty())) &&
+			   !cue_reference(value)) {
 				error = key + ": expected a deployed sound cue name";
 				return false;
 			}
 			if(info.count("resource") && info.at("resource") == "actor" && !actor_template(templates, value, error)) {
 				error = key + ": " + error;
+				return false;
+			}
+			if(info.count("resource") && info.at("resource") == "objective" &&
+			   (value.size() > 31 || value.find_first_not_of(
+					"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_") != std::string::npos)) {
+				error = key + ": expected an optional deployed objective key (at most 31 ASCII letters/digits/underscores)";
+				return false;
+			}
+			if(info.count("resource") && info.at("resource") == "cutscene" && !cutscene_reference(value)) {
+				error = key + ": expected a deployed cutscene name (1..31 ASCII letters/digits/underscore/hyphen, optional .ncs)";
 				return false;
 			}
 
@@ -1077,18 +1561,36 @@ bool body(const nod_scene::Entity &entity, const std::map<std::string, uint32_t>
 			   (info.count("min") && (info.count("exclusive-min") ? real <= std::stof(info.at("min")) :
 											real < std::stof(info.at("min")))) ||
 			   (info.count("max") && real > std::stof(info.at("max")))) {
-				error = key + (handler == "cDoorMove" ? ": expected a finite positive mover speed" :
+				error = key + (handler == "cTimerTrigger" ? ": expected a timer interval from 0.001 to 599.999 seconds" :
+							  handler == "cRegionDamage" ? (i == 0 ? ": expected finite nonnegative damage" :
+								  ": expected phase seconds from 0 to 599.899") :
+							  handler == "cDoorMove" ? ": expected a finite positive mover speed" :
+							  handler == "cRegionStealth" ? ": expected a finite native location-stealth value" :
+							  handler == "cFogSet" ? (i == 7 ? ": expected fog transition seconds from 0 to 599.999" :
+								  ": expected a finite nonnegative fog distance") :
 							  ": expected a finite nonnegative float");
 				return false;
 			}
 
 			std::memcpy(&number, &real, sizeof(number));
+		} else if(info.count("resource") && info.at("resource") == "reverb") {
+			if(!reverb_parameter(value, number)) {
+				error = key + ": expected -1 (unchanged) or a canonical reverb preset 0..25";
+				return false;
+			}
+		} else if(info.count("resource") && info.at("resource") == "save-marker") {
+			if(!save_marker_parameter(value, number)) {
+				error = key + ": expected -1 (no marker registration) or a canonical objective marker 0..15";
+				return false;
+			}
 		} else if(!nod_scene::parse_unsigned_integer(text, UINT32_MAX, &number) || std::to_string(number) != value ||
 				  (info.count("min") && number < std::stoul(info.at("min"))) ||
 				  (info.count("max") && number > std::stoul(info.at("max")))) {
 			const bool boolean = info.count("min") && info.at("min") == "0" &&
 								 info.count("max") && info.at("max") == "1";
-			error = key + (handler == "cButton" || boolean ? ": expected 0 or 1" :
+			error = key + (handler == "cFogSet" ? ": expected a canonical integer from " +
+						  info.at("min") + " to " + info.at("max") :
+						  handler == "cButton" || boolean ? ": expected 0 or 1" :
 						  ": expected a canonical uint32 (spawn limit: 1..25)");
 			return false;
 		}
@@ -1096,7 +1598,7 @@ bool body(const nod_scene::Entity &entity, const std::map<std::string, uint32_t>
 		word(pending, number);
 	}
 
-	if(handler == "cRegionTrigger") {
+	if(schema.count("nod_region_min")) {
 		word(pending, 1);
 		if(!region_model(entity, pending, error)) {
 			return false;
@@ -1209,9 +1711,12 @@ bool compile(const nod_scene::Map &map, uint32_t first_index,
 				}
 
 				const std::string script = imported ? property(*imported, "nod_prop_15") : "";
-				if(script != "cSoundStinger" && script != "cTriggerRelay" && script != "cDoorMove") {
+				if(script != "cSoundStinger" && script != "cTriggerRelay" && script != "cDoorMove" &&
+				   script != "cObjectiveUpdate" && script != "cCutscenePlay" && script != "cRegionSave" &&
+				   script != "cRegionStealth" && script != "cRegionDamage" && script != "cFogSet" &&
+				   script != "cSoundLoop" && !(control_handler(script) && behavior(script).at("input") == "trigger")) {
 					error = "Entity " + std::to_string(placement.entity) +
-							": Imported sequence receivers must be verified sound cues or pulse relays";
+							": Imported sequence receivers must have a verified native trigger input";
 					return false;
 				}
 			}

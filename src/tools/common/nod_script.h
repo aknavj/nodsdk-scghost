@@ -50,12 +50,20 @@ bool body_key(const std::string &key);
  */
 using Fields = std::map<std::string, std::string>;
 const std::vector<std::string> &handlers();
-Fields defaults(const std::string &handler);
+Fields defaults(const std::string &handler, uint32_t owner_type = 3);
 Fields behavior(const std::string &handler);
 Fields field_info(const std::string &handler, const std::string &key);
 bool compatible(const std::string &handler, const std::vector<NOTParser::ResolvedProperty> &properties);
 bool spawnable(const std::vector<NOTParser::ResolvedProperty> &properties);
 bool actor_template(const NOTDatabase &templates, const std::string &name, std::string &error);
+bool cutscene_reference(const std::string &value);
+bool cue_reference(const std::string &value);
+bool reverb_parameter(const std::string &value, uint32_t &number);
+bool save_marker_parameter(const std::string &value, uint32_t &number);
+bool fog_distances(const nod_scene::Entity &entity, std::string &error);
+bool control_handler(const std::string &handler);
+bool control_parameter(const std::string &handler, unsigned slot, const std::string &value, std::string &error);
+bool control_body(const nod_scene::Entity &entity, std::string &error);
 bool body(const nod_scene::Entity &entity, const std::map<std::string, uint32_t> &targets,
 		  std::vector<uint8_t> &bytes, std::string &error, const NOTDatabase &templates);
 bool targets(const nod_scene::Map &map, uint32_t first_index,

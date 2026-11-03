@@ -327,7 +327,7 @@ int main(int argc, char **argv) {
 						continue;
 					}
 
-					auto fields = nod::script::defaults(handler);
+					auto fields = nod::script::defaults(handler, type);
 					if(handler == "cButton" && model != "doorSwitch_01.nod") {
 						fields["nod_script_param_14"] = "";
 					}

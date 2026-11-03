@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `NODScript` language-version-1 CLI for checking `.nods` sources and expanding console, sound, enemy and timed trigger sequences into verified native controls; supports NOT archive validation without adding arbitrary runtime code.
+- Source-backed `NODscene compile` editing of native script parameters/frames, scene environment and NPD waypoints/links, plus added NOT placements and native controls. Matching `.nodsrc` data preserves original NIL geometry/lighting and unchanged native payloads; geometry/material/UV editing and deletion of existing NSD entities remain unsupported.
+- SDK-owned NOT metadata for 31 native gameplay authoring workflows, covering console/button actions, audio, AI spawning, relays, doors, trigger/objective/cutscene/timer controls, checkpoint/stealth/kill/damage regions and fog.
+- Fourteen additional native handlers across five areas: effects/particles (`cParticleToggle`, `cEffectAdd`, `cObjectExplosion`, `cRain`), advanced movers (`cObjectMove`, `cObjectRotate`), object manipulation (`cObjectSetCollision`, `cObjectSetColor`, `cObjectRemove`, `cPhysicsActivate`), messaging (`cHelpText`, `cPopupConversation`) and transitions (`cMissionNext`, `cLevelChange`).
+- `NODTemplates` XML catalog version 2 with shared native behavior schemas, compatible per-template handler defaults, spawnable-actor capabilities, frame initialization hints, editable/fixed fields, resource optionality and verified trigger input/output layouts for generic Radiant authoring.
+- Native trigger graph and sequence receiver validation, including symbolic references, relay payloads, cycle/action limits and weighted accounting against the shared 128-slot startup timer pool.
+- Typed native script edits with resource, parameter and cross-field validation while retaining unchanged source-backed legacy values, opaque payloads and exact round-trips.
+- Native gameplay authoring and trigger-capability documentation, with conformance coverage for original callbacks and source-backed triples. Rendering, resource loading, physics/tracking, UI/audio and mission handoffs retain explicit live-runtime verification limits; pickups, unrelated regions and unverified complex handlers are unchanged.
 - `MAPtoNIL --physics-margin N` to configure automatic physics-bounds padding in MAP units without changing the one-unit default; explicit `--physics-bounds` remains a mutually exclusive alternative.
 - Scriptless single-player startup guidance covering the reported origin spawn, embedded-collision failure, safe authoring workaround and manual reproduction checklist, with runtime-specific validation limits.
 - `MAPtoNSD` worldspawn keys `nod_sky_model` and `nod_sky_animation` for validated, fixed-width native sky references; all other trailer fields and default output remain unchanged.
@@ -19,6 +27,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Optional native player-placement regression tests and precise startup guidance: routing depends on placement flag `0x8` or save restoration, with origin fallbacks for missing sectors/starts; full controller physics remains unverified.
 - Optional `CollisionStartNative` reproduction of first-step test-sphere NaNs on compiled brush surfaces with both 1- and 100-unit physics margins, plus finite clear-start and partial-overlap controls. Read-only contact tracing identifies zero-distance normalization producing NaN normals before the body becomes non-finite (issue #2, item 4); this is not a player/controller fix.
 - Optional `MusicGainNative` checks for profile-driven float gain, native clamping/caching and logarithmic XACT volume handoff; distinguish this verified API from the still-unverified uint32 NSD volume fields without adding speculative authoring keys.
+
+### Changed
+
+- Accelerate CPU lighting shadow queries with cached occluder bounds/edges and a spatial hierarchy, retaining existing intersection tolerances and bounded work.
+- Share native placement/script compilation between `MAPtoNSD` and the source-backed scene compiler, and include `NODScript` in the tool build without coupling production targets to local regression files.
+- Resolve managed-spawn actors and interactive console presets from effective NOT capabilities rather than limiting authoring to a fixed list of template names.
 
 ### Fixed
 
