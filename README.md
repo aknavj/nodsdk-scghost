@@ -18,6 +18,7 @@ preservation project.
 | `NODAssetViewer` | Browse models, levels, textures, animations, scenes, and audio assets |
 | `NSDEditor`, `NOTEditor` | Inspect and edit native scene and template documents |
 | `NODscene` | Import/export scene data, apply sidecar-backed edits, and generate previews or entity definitions |
+| `NODScript` | Validate `.nods` sources and compile native trigger sequences |
 | `NILtoMAP` | Convert NIL render geometry to editable Quake III MAP brushes used by [nodsdk-radiant](https://github.com/aknavj/nodsdk-radiant) |
 | `MAPtoNIL` | Compile MAP world geometry and collision; excludes point-entity placements |
 | `MAPtoNSD` | Compile native template placements into NSD scenes |
@@ -72,7 +73,7 @@ git submodule update --init --recursive
 bash build.sh
 ```
 
-[build.sh](build.sh) builds all ten applications in Release:
+[build.sh](build.sh) builds all eleven applications in Release:
 
 - `build-out/` contains only the application executables.
 - `.build/` contains CMake files, libraries, installed dependencies, and intermediates.

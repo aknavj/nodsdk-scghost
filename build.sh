@@ -13,7 +13,7 @@ fi
 repo_root="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 build_dir="$repo_root/.build"
 output_dir="$repo_root/build-out"
-apps=(NILtoMAP NODscene NODtoNMB MAPtoNIL MAPtoNSD MAPtoNPD NODTemplates NSDEditor NOTEditor NODAssetViewer)
+apps=(NILtoMAP NODscene NODScript NODtoNMB MAPtoNIL MAPtoNSD MAPtoNPD NODTemplates NSDEditor NOTEditor NODAssetViewer)
 exe_suffix=""
 cmake_args=()
 
