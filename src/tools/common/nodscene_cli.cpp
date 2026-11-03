@@ -41,7 +41,7 @@ void usage(FILE *file) {
 		"import : Import native scenes for NOT-driven MAP authoring.\n"
 		"export : Export legacy MAP geometry and a NODSRC sidecar.\n"
 		"export-properties : Export geometry with placement properties and a sidecar.\n"
-		"compile : Apply sidecar-backed edits; authoring MAPs and geometry edits are unsupported.\n"
+		"compile : Apply sidecar-backed property/script/environment edits and added native controls/NPD points; NIL geometry is preserved.\n"
 		"preview : Export a model-brush preview using native assets.\n"
 		"preview-obj : Export an OBJ-backed preview using native assets.\n"
 		"entitydefs : Generate entity definitions from one or more NSD files.\n"
@@ -54,6 +54,7 @@ void usage(FILE *file) {
 		"NODscene export input.nil input.nsd input.npd output.map output.nodsrc\n"
 		"NODscene export-properties input.nil input.nsd input.npd output.map output.nodsrc\n"
 		"NODscene compile input.map input.nodsrc output.nil output.nsd output.npd\n"
+		"NODscene compile input.map input.nodsrc output.nil output.nsd output.npd workspace assets-root\n"
 		"NODscene preview input.map input.nodsrc assets-root level.nmb preview-root output.map output.nodsrc\n"
 		"NODscene preview-obj input.map input.nodsrc assets-root level.nmb preview-root output.map output.nodsrc\n"
 		"NODscene entitydefs output.def --assets-root assets-root --inventory output.json input.nsd\n");
@@ -85,7 +86,7 @@ int main(int argc, char **argv) {
 
 	const bool definitions = argc >= 4 && !strcmp(argv[1], "entitydefs");
 	const bool authoring   = argc == 9 && !strcmp(argv[1], "import");
-	if(!(definitions || authoring ||
+	if(!(definitions || authoring || (argc == 9 && !strcmp(argv[1], "compile")) ||
 		 (argc == nod_scene::export_argument_count &&
 		  (!strcmp(argv[1], "export") || !strcmp(argv[1], "export-properties") || !strcmp(argv[1], "compile"))) ||
 		 (argc == nod_scene::preview_argument_count &&

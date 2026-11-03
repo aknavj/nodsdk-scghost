@@ -8,7 +8,7 @@ StaRev - Starcraft Ghost reversed
 This file is part of the StaRev source code.
 
 File: maptonsd.cpp
-Version: 0.6.7
+Version: 0.6.8
 
 StaRev is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License version 3
@@ -29,6 +29,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "tool_help.h"
 #include "nod_assets.h"
 #include "path_graph.h"
+#include "nod_script.h"
 #include "map_lighting.h"
 #include "NSDParser.h"
 #include "../editors/document.h"
@@ -39,12 +40,24 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <set>
 
 /*
  */
 namespace {
 namespace fs = std::filesystem;
+
+/*
+ */
+constexpr size_t scene_trailer_size = 192;
+constexpr size_t music_offset = 16;
+constexpr size_t ambient_loop_offset = 48;
+constexpr size_t reverb_offset = 92;
+constexpr size_t fog_offset = 96;
+constexpr size_t far_clip_offset = 120;
+constexpr size_t sky_model_offset = 128;
+constexpr size_t sky_animation_offset = 160;
 
 /*
  */
@@ -64,6 +77,85 @@ bool number(const std::string &text, uint32_t limit, uint32_t &value) {
 const char *property(const nod_scene::Entity *entity, const char *key) {
 	const auto *value = nod_scene::get_property(entity, key);
 	return value ? value : "";
+}
+
+/*
+ */
+bool scene_reference(const nod_scene::Entity &world, const char *key, const char *extension, std::string &value,
+					 std::string &error) {
+	value = property(&world, key);
+	if(value.empty()) {
+		return true;
+	}
+
+	const auto extension_length = std::strlen(extension);
+	if(value.size() > 31 ||
+	   std::any_of(value.begin(), value.end(), [](unsigned char c) {
+		   return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
+					c == '-' || c == '.');
+	   }) ||
+	   (extension_length && (value.size() <= extension_length ||
+							 NodTools::lower_ascii(value.substr(value.size() - extension_length)) != extension)) ||
+	   (!extension_length && (value.front() == '.' || value.back() == '.'))) 
+	{
+		error = "Worldspawn " + std::string(key) +
+				": expected an empty value or a 1..31-byte ASCII filename" +
+				(extension_length ? std::string(" ending in ") + extension
+								  : " with a nonempty basename and optional extension; no leading/trailing dot") +
+				" (letters, digits, _, -, .; no paths)";
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ */
+struct Fog {
+	bool linear = false;
+	float color[3]{};
+	float start = 0;
+	float end = 0;
+};
+
+/*
+ */
+bool fog_settings(const nod_scene::Entity &world, Fog &fog, std::string &error) {
+	
+	const auto *mode = nod_scene::get_property(&world, "nod_fog_mode");
+	if(!mode || std::strcmp(mode, "none") == 0) {
+		for(const auto *key : {"nod_fog_color", "nod_fog_start", "nod_fog_end"}) {
+			if(nod_scene::get_property(&world, key)) {
+				error = "Worldspawn " + std::string(key) + ": requires nod_fog_mode \"linear\"";
+				return false;
+			}
+		}
+		return true;
+	}
+
+	if(std::strcmp(mode, "linear") != 0) {
+		error = "Worldspawn nod_fog_mode: expected \"none\" or \"linear\"";
+		return false;
+	}
+
+	if(!nod_scene::float_vector(property(&world, "nod_fog_color"), fog.color) ||
+	   std::any_of(std::begin(fog.color), std::end(fog.color), [](float value) { return value < 0 || value > 255; })) {
+		error = "Worldspawn nod_fog_color: expected three finite RGB components in 0..255";
+		return false;
+	}
+
+	if(!nod_scene::parse_float(property(&world, "nod_fog_start"), &fog.start) || fog.start < 0) {
+		error = "Worldspawn nod_fog_start: expected a finite nonnegative distance";
+		return false;
+	}
+
+	if(!nod_scene::parse_float(property(&world, "nod_fog_end"), &fog.end) || fog.end <= fog.start) {
+		error = "Worldspawn nod_fog_end: expected a finite distance greater than nod_fog_start in binary32";
+		return false;
+	}
+
+	fog.linear = true;
+	return true;
 }
 
 /*
@@ -210,7 +302,7 @@ bool imported(const nod_scene::Entity &entity, std::vector<NODModifier> &values,
 /*
  */
 bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &templates, std::vector<uint8_t> &bytes,
-					std::string &error) {
+					const std::map<std::string, uint32_t> &targets, std::string &error) {
 	if(entity.brush_count) {
 		error = "Brush entities are unsupported";
 		return false;
@@ -219,32 +311,56 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 	const std::string name		= property(&entity, "nod_template");
 	const std::string classname = property(&entity, "classname");
 	const std::string authoring = property(&entity, "nod_authoring");
-	if(!((authoring == "not-template-v2" && classname == name) ||
-		 (authoring == "map-template-v1" && classname == "nod_template_instance"))) {
-		error = "Expected a native template placement";
+	
+	if(name.empty() || name.size() > 31) {
+		error = "Expected nod_template with a native template name of 1..31 bytes";
+		return false;
+	}
+
+	if(authoring != "not-template-v2" && authoring != "map-template-v1") {
+		error = "Expected nod_authoring \"not-template-v2\" or \"map-template-v1\" for a native template placement";
+		return false;
+	}
+
+	const std::string expected_class = authoring == "not-template-v2" ? name : "nod_template_instance";
+	if(classname != expected_class) {
+		error = "Expected classname \"" + expected_class + "\" for nod_authoring \"" + authoring + "\"";
 		return false;
 	}
 
 	const auto *object = templates.findTemplate(name.c_str());
 	const auto *source = object ? templates.source(object) : nullptr;
-	if(!source || name != object->name || name.empty() || name.size() > 31 ||
-	   source->name != property(&entity, "nod_template_archive")) {
-		error = "Unresolved template or stale archive provenance";
+	if(!source) {
+		error = "Unresolved nod_template \"" + name + "\"; check nod_template_archives and the live NOT database";
+		return false;
+	}
+
+	if(name != object->name) {
+		error = "Expected nod_template \"" + std::string(object->name) + "\" with exact native spelling";
+		return false;
+	}
+
+	if(source->name != property(&entity, "nod_template_archive")) {
+		error = "Expected nod_template_archive \"" + source->name + "\" for nod_template \"" + name + "\"";
 		return false;
 	}
 
 	uint32_t expected_type;
 	if(!number(property(&entity, "nod_template_type"), UINT32_MAX, expected_type)) {
-		error = "Invalid native type metadata";
+		error = "Expected nod_template_type as a canonical unsigned 32-bit decimal integer";
 		return false;
 	}
 
 	float position[3];
 	float angles[3];
 	float rotation[3];
-	if(!nod_scene::float_vector(property(&entity, "origin"), position) ||
-	   !nod_scene::float_vector(property(&entity, "angles"), angles)) {
-		error = "Expected finite origin and angles vectors";
+	if(!nod_scene::float_vector(property(&entity, "origin"), position)) {
+		error = "Expected origin with three finite world-space coordinates";
+		return false;
+	}
+
+	if(!nod_scene::float_vector(property(&entity, "angles"), angles)) {
+		error = "Expected angles with three finite editor-degree values";
 		return false;
 	}
 
@@ -274,10 +390,24 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 	}
 
 	NODModifier sector{};
-	sector.prop_id	  = 3;
+	sector.prop_id	  = expected_type == 3 ? 15 : 3;
 	sector.value_size = 32;
-	if(values.size() > 3 && values[3].prop_id == 3) {
-		put32(values[3].value, 0);
+	if(expected_type == 3) {
+		const std::string handler = property(&entity, "nod_prop_15");
+		if(!nod::script::defaults(handler).count("nod_region_min") || !*property(&entity, "nod_script_authoring")) {
+			error = "New regions require a verified SDK region handler schema";
+			return false;
+		}
+
+		std::copy(handler.begin(), handler.end(), sector.value);
+	}
+
+	if(values.size() > 3 && values[3].prop_id == sector.prop_id) {
+		if(expected_type == 3) {
+			values[3] = sector;
+		} else {
+			put32(values[3].value, 0);
+		}
 	} else {
 		values.insert(values.begin() + 3, sector);
 	}
@@ -317,6 +447,10 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 			continue;
 		}
 
+		if(nod::script::body_key(key)) {
+			continue;
+		}
+
 		uint32_t id = 0;
 		if(key.compare(0, 13, "nod_modifier_") == 0) {
 			if(!number(key.substr(13), NOTParser::MAX_PROPERTIES - 1, id) || id >= count) {
@@ -327,14 +461,28 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 			continue;
 		}
 
+		const bool handler = key == "nod_prop_15" &&
+			!std::strcmp(property(&entity, "nod_script_authoring"), "parameters-v1");
+		if(expected_type == 3 && handler) {
+			continue;
+		}
 		if(key.compare(0, 9, "nod_prop_") != 0 || !number(key.substr(9), 176, id) ||
-		   !nodPropertyMapEditable(id, false) || !find(resolved, id)) {
+		   (!handler && (!nodPropertyMapEditable(id, false) || !find(resolved, id)))) {
 			error = "Unsupported or absent template property: " + key;
 			return false;
 		}
 
 		NODModifier value{};
-		if(!nod::edit::encode_modifier(id, text, value, error)) {
+		if(handler) {
+			if(nod::script::defaults(text).empty()) {
+				error = "Unsupported native handler/NOT template combination";
+				return false;
+			}
+
+			value.prop_id = 15;
+			value.value_size = 32;
+			std::copy(text.begin(), text.end(), value.value);
+		} else if(!nod::edit::encode_modifier(id, text, value, error)) {
 			error = key + ": " + error;
 			return false;
 		}
@@ -358,22 +506,37 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 	}
 
 	const auto *type = find(resolved, 20);
-	if(!type || u32(type->value) != expected_type) {
-		error = "Stale or missing native type";
+	if(!type) {
+		error = "Template \"" + name + "\" has no resolved native type (property 20)";
 		return false;
 	}
 
-	if(expected_type != 0 && expected_type != 2 && expected_type != 7 && expected_type != 8) {
+	if(u32(type->value) != expected_type) {
+		error = "Expected nod_template_type \"" + std::to_string(u32(type->value)) + "\" for nod_template \"" + name +
+				"\"";
+		return false;
+	}
+
+	if(expected_type != 0 && expected_type != 2 && expected_type != 3 && expected_type != 7 && expected_type != 8) {
 		error = "Template '" + name + "' has unsupported native type " + std::to_string(expected_type) +
-				"; supported point types are 0, 2, 7 and 8";
+				"; supported point types are 0, 2, 3, 7 and 8";
 		return false;
 	}
 
-	for(size_t i = 1; i <= 3; ++i) {
+	for(size_t i = 1; i <= (expected_type == 3 ? 2u : 3u); ++i) {
 		const auto *effective = find(resolved, uint32_t(i));
 		if(!effective || std::memcmp(effective->value, values[i].value, i == 3 ? 4 : 12)) {
 			error = "Later modifiers override the placement transform or sector";
 			return false;
+		}
+	}
+
+	if(expected_type == 3) {
+		for(size_t axis = 0; axis < 3; ++axis) {
+			if(f32(values[1].value + axis * 4) != 0) {
+				error = "New trigger regions currently require zero rotation";
+				return false;
+			}
 		}
 	}
 
@@ -395,13 +558,120 @@ bool compile_entity(const nod_scene::Entity &entity, const NOTDatabase &template
 		}
 	}
 
+	const std::string handler = property(&entity, "nod_prop_15");
+	const bool rotation_mover = handler == "cObjectRotate";
+	const bool mover = handler == "cDoorMove" || handler == "cObjectMove" || rotation_mover;
+	const auto *model = find(resolved, 4);
+	const bool modeled = expected_type == 2 && model && model->value[0];
+	if(mover) {
+		if(!modeled) {
+			error = "Model movers require a type-2 NOT model";
+			return false;
+		}
+
+		for(const auto &setting : {std::pair<uint32_t, uint32_t>{45, 2}, {52, 1024}}) {
+			const std::string key = "nod_prop_" + std::to_string(setting.first);
+			const auto *explicit_value = nod_scene::get_property(&entity, key.c_str());
+			if(explicit_value && std::string(explicit_value) != std::to_string(setting.second)) {
+				error = key + ": model movers require tracker MOVETYPE 2 and PHYSICSFLAGS 1024";
+				return false;
+			}
+
+			if(values.size() == NOTParser::MAX_PROPERTIES) {
+				error = "Too many placement modifiers for model-mover tracking";
+				return false;
+			}
+
+			NODModifier tracking{};
+			tracking.prop_id = setting.first;
+			tracking.value_size = 32;
+			put32(tracking.value, setting.second);
+			values.push_back(tracking);
+		}
+
+		float endpoints[2][3], frame_rotation[3];
+		for(unsigned i = 0; i < (rotation_mover ? 1u : 2u); ++i) {
+			const auto suffix = std::to_string(i);
+			if(!nod_scene::float_vector(property(&entity, ("nod_frame_origin_" + suffix).c_str()), endpoints[i]) ||
+			   !nod_scene::float_vector(property(&entity, ("nod_frame_rotation_" + suffix).c_str()), frame_rotation)) {
+				error = "Model movers require two finite endpoint frames";
+				return false;
+			}
+
+			for(unsigned axis = 0; axis < 3 && !rotation_mover; ++axis) {
+				if((i == 0 && std::fabs(endpoints[i][axis] - position[axis]) > 0.0001f) ||
+				   std::fabs(frame_rotation[axis] - rotation[axis]) > 0.0001f) {
+					error = "Mover stop 0 must match its origin; both frame rotations must match its native orientation";
+					return false;
+				}
+			}
+		}
+
+		if(rotation_mover) {
+			const double angle_squared = double(frame_rotation[0]) * frame_rotation[0] +
+				double(frame_rotation[1]) * frame_rotation[1] + double(frame_rotation[2]) * frame_rotation[2];
+			float speed;
+			if(!nod_scene::parse_float(property(&entity, "nod_script_param_1"), &speed) || speed <= 0 ||
+			   angle_squared < 0.000001 || angle_squared > std::numeric_limits<float>::max() ||
+			   !std::isfinite(speed / std::sqrt(static_cast<float>(angle_squared))) ||
+			   speed / std::sqrt(static_cast<float>(angle_squared)) <= 0) {
+				error = "Pivot rotation requires a finite nonzero native degree vector";
+				return false;
+			}
+		} else {
+			double distance_squared = 0;
+			for(unsigned axis = 0; axis < 3; ++axis) {
+				const double delta = double(endpoints[1][axis]) - endpoints[0][axis];
+				distance_squared += delta * delta;
+			}
+
+			if(distance_squared < 0.000001) {
+				error = "Mover stops must be at least 0.001 world units apart";
+				return false;
+			}
+
+			float speed;
+			if(!nod_scene::parse_float(property(&entity, handler == "cObjectMove" ? "nod_script_param_2" :
+																			  "nod_script_param_1"), &speed) || speed <= 0) {
+				error = "Mover speed must be finite and positive";
+				return false;
+			}
+
+			const float distance = std::sqrt(static_cast<float>(distance_squared));
+			const float rate = speed / distance;
+			if(distance_squared > std::numeric_limits<float>::max() || !std::isfinite(rate) || rate <= 0) {
+				error = "Mover distance/speed overflow or underflow the native float tracker";
+				return false;
+			}
+		}
+	}
+
 	word(bytes, static_cast<uint32_t>(values.size()));
 	for(const auto &value : values) {
 		modifier(bytes, value);
 	}
 
-	// Empty frames, script parameters, inline model, sector links, camera region and lights.
-	bytes.resize(bytes.size() + 20, 0);
+	if(*property(&entity, "nod_script_authoring")) {
+		if(!nod::script::compatible(property(&entity, "nod_prop_15"), resolved)) {
+			error = "Native handler is incompatible with the resolved NOT placement";
+			return false;
+		}
+
+		if(!nod::script::body(entity, targets, bytes, error, templates)) {
+			return false;
+		}
+	} else {
+		for(size_t i = 0; i < entity.pair_count; ++i) {
+			const std::string key = entity.pairs[i].key;
+			if(nod::script::body_key(key) && key != "targetname") {
+				error = "Native body fields require a complete handler schema";
+				return false;
+			}
+		}
+
+		// Preserve the original empty variable sections for ordinary placements.
+		bytes.resize(bytes.size() + 20, 0);
+	}
 	return true;
 }
 
@@ -426,7 +696,8 @@ bool compile(const nod_scene::Map &map, const fs::path &workspace, const fs::pat
 
 	std::vector<size_t> placements;
 	for(size_t i = 1; i < map.count; ++i) {
-		if(!nod::path::authoring_class(map.entities[i]) && !nod::lighting::authoring_class(map.entities[i])) {
+		if(!nod::path::authoring_class(map.entities[i]) && !nod::lighting::authoring_class(map.entities[i]) &&
+		   !nod::script::authoring_class(map.entities[i])) {
 			placements.push_back(i);
 		}
 	}
@@ -436,32 +707,102 @@ bool compile(const nod_scene::Map &map, const fs::path &workspace, const fs::pat
 		return false;
 	}
 
+	std::vector<std::vector<uint8_t>> script_records;
+	std::map<std::string, uint32_t> targets, generic_targets;
+	if(!nod::script::targets(map, 0, targets, error)) {
+		return false;
+	}
+
+	for(const auto &target : targets) {
+		if(target.second < placements.size()) {
+			generic_targets.insert(target);
+		}
+	}
+
 	const auto &world = map.entities[0];
 	for(size_t i = 0; i < world.pair_count; ++i) {
-		if(std::strcmp(world.pairs[i].key, "classname") && std::strcmp(world.pairs[i].key, "nod_light_spacing")) {
-			error = "Worldspawn scene settings are unsupported";
+		const std::string key = world.pairs[i].key;
+		if(key != "classname" && key != "nod_light_spacing" && key != "nod_music" && key != "nod_ambient_loop" &&
+		   key != "nod_sky_model" && key != "nod_sky_animation" && key != "nod_fog_mode" &&
+		   key != "nod_fog_color" && key != "nod_fog_start" && key != "nod_fog_end" && key != "nod_far_clip" &&
+		   key != "nod_reverb" && key != "nod_sky_unmasked") {
+			error = "Worldspawn: Unsupported scene setting: " + key;
 			return false;
 		}
+	}
+
+	std::string music;
+	std::string ambient_loop;
+	std::string sky_model;
+	std::string sky_animation;
+
+	if(!scene_reference(world, "nod_music", "", music, error) ||
+	   !scene_reference(world, "nod_ambient_loop", "", ambient_loop, error) ||
+	   !scene_reference(world, "nod_sky_model", ".nod", sky_model, error) ||
+	   !scene_reference(world, "nod_sky_animation", ".nad", sky_animation, error)) {
+		return false;
+	}
+
+	Fog fog;
+	if(!fog_settings(world, fog, error)) {
+		return false;
+	}
+
+	float far_clip = 0;
+	const auto *far_clip_text = nod_scene::get_property(&world, "nod_far_clip");
+	if(far_clip_text && (!nod_scene::parse_float(far_clip_text, &far_clip) || far_clip < 0)) {
+		error = "Worldspawn nod_far_clip: expected a finite nonnegative distance; 0 selects the native default";
+		return false;
+	}
+
+	uint32_t reverb = 0;
+	const auto *reverb_text = nod_scene::get_property(&world, "nod_reverb");
+	if(reverb_text && !number(reverb_text, 25, reverb)) {
+		error = "Worldspawn nod_reverb: expected a canonical decimal preset ID in 0..25";
+		return false;
+	}
+
+	uint32_t sky_unmasked = 0;
+	const auto *sky_unmasked_text = nod_scene::get_property(&world, "nod_sky_unmasked");
+	if(sky_unmasked_text && !number(sky_unmasked_text, 1, sky_unmasked)) {
+		error = "Worldspawn nod_sky_unmasked: expected 0 (surface mask) or 1 (full viewport)";
+		return false;
 	}
 
 	std::vector<std::string> archives;
 	const std::string context =
 		placements.empty() ? "" : property(&map.entities[placements[0]], "nod_template_archives");
 	if(!archive_context(context, archives, error)) {
+		error = "nod_template_archives: " + error;
 		return false;
 	}
 
 	for(const auto i : placements) {
 		if(context != property(&map.entities[i], "nod_template_archives")) {
-			error = "Placements must share one ordered archive context";
+			error = "Entity " + std::to_string(i) +
+					": nod_template_archives must match the first placement's ordered archive context";
 			return false;
 		}
 	}
 
+	bool needs_templates = !placements.empty();
+	for(size_t i = 1; i < map.count; ++i) {
+		const auto &entity = map.entities[i];
+		needs_templates = needs_templates || !std::strcmp(property(&entity, "classname"), "nod_enemy_spawn") ||
+						  nod_scene::get_property(&entity, "nod_console_template");
+	}
+
 	NOTDatabase templates;
-	if(!templates.load(workspace, archives, error, assets)) {
+	if(needs_templates && !templates.load(workspace, archives, error, assets)) {
 		return false;
 	}
+
+	if(!nod::script::compile(map, static_cast<uint32_t>(placements.size()), generic_targets, script_records, error,
+							needs_templates ? &templates : nullptr)) {
+		return false;
+	}
+
+	const auto record_count = placements.size() + script_records.size();
 
 	for(const auto &warning : templates.warnings()) {
 		std::cerr << "MAPtoNSD: " << warning << '\n';
@@ -470,7 +811,7 @@ bool compile(const nod_scene::Map &map, const fs::path &workspace, const fs::pat
 	bytes.assign(72, 0);
 	put32(bytes.data(), 0x1044534e);
 	put32(bytes.data() + 4, 11);
-	word(bytes, 0);
+	word(bytes, sky_unmasked ? 2 : 0);
 	word(bytes, static_cast<uint32_t>(archives.size()));
 	for(const auto &archive : archives) {
 		const auto offset = bytes.size();
@@ -478,18 +819,40 @@ bool compile(const nod_scene::Map &map, const fs::path &workspace, const fs::pat
 		std::copy(archive.begin(), archive.end(), bytes.begin() + offset);
 	}
 
-	word(bytes, static_cast<uint32_t>(placements.size()));
+	word(bytes, static_cast<uint32_t>(record_count));
 	for(const auto i : placements) {
-		if(!compile_entity(map.entities[i], templates, bytes, error)) {
+		if(!compile_entity(map.entities[i], templates, bytes, targets, error)) {
 			error = "Entity " + std::to_string(i) + ": " + error;
 			return false;
 		}
 	}
 
-	// No sounds or auxiliary world arrays; empty environment and sky fields, flags zero.
-	bytes.resize(bytes.size() + 192, 0);
+	for(const auto &record : script_records) {
+		bytes.insert(bytes.end(), record.begin(), record.end());
+	}
+
+	// No sounds or auxiliary world arrays; unexposed environment fields remain zero.
+	const auto trailer = bytes.size();
+	bytes.resize(trailer + scene_trailer_size, 0);
+	std::copy(music.begin(), music.end(), bytes.begin() + trailer + music_offset);
+	std::copy(ambient_loop.begin(), ambient_loop.end(), bytes.begin() + trailer + ambient_loop_offset);
+
+	put32(bytes.data() + trailer + reverb_offset, reverb);
+	put32(bytes.data() + trailer + fog_offset, fog.linear ? 1 : 0);
+
+	for(size_t i = 0; i < 3; ++i) {
+		put_float(bytes.data() + trailer + fog_offset + 4 + i * 4, fog.color[i]);
+	}
+
+	put_float(bytes.data() + trailer + fog_offset + 16, fog.start);
+	put_float(bytes.data() + trailer + fog_offset + 20, fog.end);
+	put_float(bytes.data() + trailer + far_clip_offset, far_clip);
+
+	std::copy(sky_model.begin(), sky_model.end(), bytes.begin() + trailer + sky_model_offset);
+	std::copy(sky_animation.begin(), sky_animation.end(), bytes.begin() + trailer + sky_animation_offset);
+
 	NSDParser check;
-	if(!check.parseBuffer(bytes.data(), bytes.size()) || check.getSceneData().entity_array_count != placements.size()) {
+	if(!check.parseBuffer(bytes.data(), bytes.size()) || check.getSceneData().entity_array_count != record_count) {
 		error = "Compiled scene failed parser cross-check";
 		return false;
 	}
@@ -499,11 +862,25 @@ bool compile(const nod_scene::Map &map, const fs::path &workspace, const fs::pat
 
 } // namespace
 
+bool nod::script::placement(const nod_scene::Entity &entity, const NOTDatabase &templates,
+						   const std::map<std::string, uint32_t> &targets,
+						   std::vector<uint8_t> &bytes, std::string &error) {
+	std::vector<uint8_t> pending;
+	if(!compile_entity(entity, templates, pending, targets, error)) {
+		return false;
+	}
+
+	bytes.insert(bytes.end(), pending.begin(), pending.end());
+	return true;
+}
+
 /*
  */
-int main(int argc, char **argv) {
+int nod::script::maptonsd_main(int argc, char **argv) {
+
 	std::string error;
 	NodTools::CommandLine command_line;
+
 	if(!command_line.initialize(argc, argv, error)) {
 		return failure(error);
 	}
@@ -514,7 +891,17 @@ int main(int argc, char **argv) {
 			"--asset-root DIR : Read-only original asset directory; output must be outside it.\n"
 			"--help : Show help.\n"
 			"-- : End options.\n"
-			"input.map : Native template point placements, types 0/2/7/8; no world geometry.\n"
+			"input.map : Native template point placements, types 0/2/7/8.\n"
+			"nod_console : Required target; optional targetname; reusable native action console.\n"
+			"nod_sound_cue : Required targetname and nod_cue; triggered 3D sound, no startup playback.\n"
+			"nod_enemy_spawn : Required targetname, nod_enemy (hydralisk/zealot/Marine), nod_destination.\n"
+			"preset defaults : Optional origin/angles default 0 0 0; nod_max_spawns is canonical 1..25 (default 25).\n"
+			"preset keys : Only classname, origin, angles and the class keys above; targets are 1..63 ASCII letters/digits/_, -, ., : (nsd: reserved).\n"
+			"nod_cue : 1..31 ASCII letters/digits/_, -, .; no leading/trailing dot.\n"
+			"worldspawn : Optional nod_music/nod_ambient_loop and nod_sky_model/nod_sky_animation references.\n"
+			"fog : Worldspawn nod_fog_mode (none/linear); linear requires nod_fog_color/nod_fog_start/nod_fog_end.\n"
+			"far clip : Worldspawn nod_far_clip (nonnegative distance; 0 selects the native default).\n"
+			"reverb : Worldspawn nod_reverb (canonical decimal native preset ID, 0..25; default 0).\n"
 			"output.nsd : Destination NSD v11 scene in sector 0, inside the workspace.\n",
 			"MAPtoNSD --workspace workspace --asset-root assets input.map workspace/output.nsd\n");
 		return argc < 2 ? 1 : 0;
@@ -525,6 +912,7 @@ int main(int argc, char **argv) {
 	fs::path input;
 	fs::path output;
 	bool options = true;
+	
 	for(int i = 1; i < argc; ++i) {
 		const std::string arg = argv[i];
 		if(arg.empty()) {
@@ -578,7 +966,7 @@ int main(int argc, char **argv) {
 	}
 
 	std::vector<uint8_t> bytes;
-	if(!compile(source.getMap(), workspace, assets, bytes, error)) {
+	if(!::compile(source.getMap(), workspace, assets, bytes, error)) {
 		return failure(error);
 	}
 

@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "metadata_xml.h"
 #include "template_edit.h"
 #include "tool_help.h"
+#include "../common/nod_script.h"
 #include <map>
 #include <algorithm>
 #include <iostream>
@@ -251,9 +252,28 @@ int main(int argc, char **argv) {
 	}
 	std::map<std::string, nod::edit::Document> documents;
 	std::ostringstream output;
-	output << "<nod-template-catalog version=\"1\">\n";
+	output << "<nod-template-catalog version=\"2\">\n";
 	for(const auto &snapshot : database.snapshots()) output << "<archive name=\"" << xml(snapshot.name) << "\"/>\n";
 	for(const auto &warning : database.warnings()) output << "<warning text=\"" << xml(warning) << "\"/>\n";
+	for(const auto &handler : nod::script::handlers()) {
+		output << "<behavior name=\"" << xml(handler) << "\"";
+		for(const auto &attribute : nod::script::behavior(handler)) {
+			output << " " << attribute.first << "=\"" << xml(attribute.second) << "\"";
+		}
+
+		output << ">\n";
+		for(const auto &field : nod::script::defaults(handler)) {
+			output << "<field key=\"" << xml(field.first) << "\" value=\"" << xml(field.second) << "\"";
+			for(const auto &attribute : nod::script::field_info(handler, field.first)) {
+				output << " " << attribute.first << "=\"" << xml(attribute.second) << "\"";
+			}
+
+			output << "/>\n";
+		}
+
+		output << "</behavior>\n";
+	}
+
 	for(const auto &entry : database.templates()) {
 		if(selection && entry.second != selection) continue;
 		const auto *source = database.source(entry.second);
@@ -278,7 +298,8 @@ int main(int argc, char **argv) {
 		output << "<template name=\"" << xml(map_name(name) ? name : "[unsupported template name]")
 			<< "\" archive=\"" << xml(source->name) << "\" type=\"" << type
 			<< "\" properties=\"" << resolved.size() << "\" placeable=\"" << (problem.empty() ? "1" : "0")
-			<< "\" model=\"" << xml(model) << "\" problem=\"" << xml(problem) << "\"";
+			<< "\" model=\"" << xml(model) << "\" problem=\"" << xml(problem)
+			<< "\" spawnable=\"" << (problem.empty() && nod::script::spawnable(resolved) ? "1" : "0") << "\"";
 		if(details) output << " parent=\"" << xml(entry.second->parent) << "\"";
 		if(preview) output << " removal-slot=\"" << removal.slot << "\" removal-payload=\"" << removal.payload
 			<< "\" removal-order=\"" << removal.order << "\"";
@@ -300,6 +321,26 @@ int main(int argc, char **argv) {
 						<< (enabled ? "1" : "0") << "\" problem=\"" << xml(issue) << "\"/>\n";
 				}
 			}
+			if(problem.empty()) {
+				for(const auto &handler : nod::script::handlers()) {
+					if(!nod::script::compatible(handler, resolved)) {
+						continue;
+					}
+
+					auto fields = nod::script::defaults(handler, type);
+					if(handler == "cButton" && model != "doorSwitch_01.nod") {
+						fields["nod_script_param_14"] = "";
+					}
+
+					output << "<handler name=\"" << handler << "\">\n";
+					for(const auto &field : fields) {
+						output << "<field key=\"" << xml(field.first) << "\" value=\"" << xml(field.second) << "\"/>\n";
+					}
+
+					output << "</handler>\n";
+				}
+			}
+
 			output << "</template>\n";
 		}
 	}
