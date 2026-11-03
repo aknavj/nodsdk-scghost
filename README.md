@@ -132,7 +132,10 @@ This is not a game remake or a distribution of proprietary game assets.
 It is intended for educational and preservation work, not commercial use.
 Respect the rights of the original authors.
 
+StarCraft: Ghost is a trademark of Blizzard Entertainment. This is an unofficial fan project, not affiliated with or endorsed by Blizzard.
+
 Licensed under GNU GPL v3. See individual source files for copyright notices.
 
+---
 This project uses AI-assisted development with collaborative human/AI oversight
 and human review of output.
