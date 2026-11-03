@@ -42,7 +42,7 @@ for build_dir in "$repo_root/.build" "$repo_root/build-out"; do
             name="${entry##*/}"
             name="${name%.exe}"
             case "$name" in
-                NILtoMAP|NODscene|NODtoNMB|MAPtoNIL|MAPtoNSD|MAPtoNPD|NODTemplates|NSDEditor|NOTEditor|NODAssetViewer)
+                NILtoMAP|NODscene|NODScript|NODtoNMB|MAPtoNIL|MAPtoNSD|MAPtoNPD|NODTemplates|NSDEditor|NOTEditor|NODAssetViewer)
                     if [[ "$build_dir" == "$repo_root/build-out" && -f "$entry" && ! -L "$entry" ]]; then
                         continue
                     fi

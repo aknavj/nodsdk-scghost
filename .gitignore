@@ -10,6 +10,9 @@ assets/
 /OpenNOD-SDK-*-windows-x64.zip
 .python-deps/
 
+# local documentation
+/src/tools/README.md
+
 # cmake generated
 CMakeCache.txt
 CMakeFiles/
