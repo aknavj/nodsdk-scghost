@@ -249,8 +249,10 @@ class AuthoringMap {
 	private:
 		Map map_data{};
 };
-int compile_map(const Blob *input, Blob sources[SOURCE_COUNT], const Map *bindings, GeometryMode geometry);
-int load_scene(Scene *scene, const char *map_path, const char *archive_path);
+int compile_map(const Blob *input, Blob sources[SOURCE_COUNT], const Map *bindings, GeometryMode geometry,
+				const std::filesystem::path &workspace = {}, const std::filesystem::path &assets = {});
+int load_scene(Scene *scene, const char *map_path, const char *archive_path,
+			   const std::filesystem::path &workspace = {}, const std::filesystem::path &assets = {});
 int export_scene(char **arguments);
 int compile_scene(char **arguments);
 std::string nsd_classname(const char *type);

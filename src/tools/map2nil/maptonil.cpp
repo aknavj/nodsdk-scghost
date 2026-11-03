@@ -8,7 +8,7 @@ StaRev - Starcraft Ghost reversed
 This file is part of the StaRev source code.
 
 File: maptonil.cpp
-Version: 0.6.7
+Version: 0.6.8
 
 StaRev is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License version 3
@@ -53,12 +53,22 @@ int failure(const std::string &message) {
 
 /*
  */
+bool physics_number(const char *text, float &value) {
+	char *end = nullptr;
+	errno	  = 0;
+	value	  = std::strtof(text, &end);
+	return end != text && !*end && errno != ERANGE && std::isfinite(value);
+}
+
+/*
+ */
 void usage(FILE *output) {
 	nod_tools_print_help(output, "MAPtoNIL",
 		"--world-only : Required; compile world geometry without point-entity placements.\n"
 		"--workspace DIR : Existing authoring workspace containing the output.\n"
 		"--asset-root DIR : Read-only original asset directory; output must be outside it.\n"
 		"--physics-bounds X0 Y0 Z0 X1 Y1 Z1 : Override generated physics bounds.\n"
+		"--physics-margin N : Pad automatic physics bounds in MAP units (default 1); excludes --physics-bounds.\n"
 		"--lighting auto|on|off : Select the light-baking mode.\n"
 		"--light-spacing N : Set light sample spacing in world units.\n"
 		"--light-samples 1|4 : Set the number of samples per lightmap texel.\n"
@@ -79,8 +89,10 @@ void usage(FILE *output) {
 /*
  */
 int main(int argc, char **argv) {
+
 	std::string error;
 	NodTools::CommandLine command_line;
+
 	if(!command_line.initialize(argc, argv, error)) {
 		return failure(error);
 	}
@@ -95,13 +107,19 @@ int main(int argc, char **argv) {
 	fs::path input;
 	fs::path output;
 	std::array<float, 6> bounds{};
+
+	float physics_margin = 1.0f;
 	bool world_only	 = false;
 	bool have_bounds = false;
+	bool have_margin = false;
 	bool options	 = true;
+
 	std::vector<std::string> lighting_arguments;
+
 	for(int i = 1; i < argc; ++i) {
 		const std::string arg	  = argv[i];
 		const int lighting_values = nod::lighting::option_arity(arg);
+		
 		if(arg.empty()) {
 			return failure("Empty argument");
 		}
@@ -139,15 +157,27 @@ int main(int argc, char **argv) {
 
 			for(float &value : bounds) {
 				const char *text = argv[++i];
-				char *end		 = nullptr;
-				errno			 = 0;
-				value			 = std::strtof(text, &end);
-				if(end == text || *end || errno == ERANGE || !std::isfinite(value)) {
+				if(!physics_number(text, value)) {
 					return failure("Invalid physics bound: " + std::string(text));
 				}
 			}
 
 			have_bounds = true;
+		} else if(options && arg == "--physics-margin") {
+			if(have_margin) {
+				return failure("Duplicate --physics-margin");
+			}
+
+			if(i + 1 == argc) {
+				return failure("--physics-margin requires one number");
+			}
+
+			const char *text = argv[++i];
+			if(!physics_number(text, physics_margin) || physics_margin <= 0) {
+				return failure("Physics margin must be a positive finite number: " + std::string(text));
+			}
+
+			have_margin = true;
 		} else if(options && lighting_values >= 0) {
 			if(i + lighting_values >= argc) {
 				return failure("Missing values for " + arg);
@@ -166,6 +196,10 @@ int main(int argc, char **argv) {
 		} else {
 			return failure("Expected one MAP and one NIL path");
 		}
+	}
+
+	if(have_bounds && have_margin) {
+		return failure("--physics-margin cannot be combined with --physics-bounds");
 	}
 
 	if(!world_only || !NodTools::is_directory(workspace) || !NodTools::is_directory(assets) || input.empty() ||
@@ -209,9 +243,9 @@ int main(int argc, char **argv) {
 
 	if(!have_bounds) {
 		for(size_t axis = 0; axis < 3; ++axis) {
-			bounds[axis]	 = std::min(geometry.low[axis] - 1.0f,
+			bounds[axis]	 = std::min(geometry.low[axis] - physics_margin,
 										std::nextafter(geometry.low[axis], -std::numeric_limits<float>::infinity()));
-			bounds[axis + 3] = std::max(geometry.high[axis] + 1.0f,
+			bounds[axis + 3] = std::max(geometry.high[axis] + physics_margin,
 										std::nextafter(geometry.high[axis], std::numeric_limits<float>::infinity()));
 		}
 	}
@@ -220,8 +254,10 @@ int main(int argc, char **argv) {
 	bundle.replace_extension(".nmb");
 	const auto root	 = assets.u8string();
 	const auto level = bundle.u8string();
+
 	std::unique_ptr<NodMaterials, decltype(&nod_materials_close)> materials(
 		nod_materials_open(root.c_str(), level.c_str(), ""), nod_materials_close);
+	
 	if(!materials) {
 		return failure("Cannot open material catalog");
 	}

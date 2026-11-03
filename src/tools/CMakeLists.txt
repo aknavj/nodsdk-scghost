@@ -28,7 +28,10 @@ target_include_directories(nil_map PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/common)
 target_link_libraries(NILtoMAP PRIVATE nil_map)
 add_library(nod_scene_bridge STATIC
     common/scene_bridge.cpp
+    map2nil/maptonsd.cpp
     common/path_graph.cpp
+    common/nod_script.cpp
+    common/nod_imported.cpp
     common/map_lighting.cpp
     common/tool_common.c
     common/nod_assets.c
@@ -36,11 +39,14 @@ add_library(nod_scene_bridge STATIC
     common/nod_materials.c
     nil2map/nodscene_export.cpp
     map2nil/nodscene_compile.cpp)
-target_link_libraries(nod_scene_bridge PUBLIC nil_map asset_parsers nod_tool_cli)
+target_link_libraries(nod_scene_bridge PUBLIC nil_map asset_parsers nod_tool_cli nod_editor_document)
 target_include_directories(nod_scene_bridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/common)
 target_compile_features(nod_scene_bridge PUBLIC cxx_std_17)
 add_executable(NODscene common/nodscene_cli.cpp)
 target_link_libraries(NODscene PRIVATE nod_scene_bridge)
+add_executable(NODScript common/nodscript_cli.cpp)
+target_link_libraries(NODScript PRIVATE nod_scene_bridge nod_editor_document)
+target_compile_features(NODScript PRIVATE cxx_std_17)
 add_library(nmb_compiler STATIC common/nmb_compiler.cpp)
 add_library(mopp_compiler STATIC common/mopp_compiler.cpp)
 target_include_directories(mopp_compiler PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/common)
@@ -54,7 +60,7 @@ add_executable(NODtoNMB nod2nmb/nodtonmb.cpp)
 target_link_libraries(NODtoNMB PRIVATE nmb_compiler nod_editor_document)
 add_executable(MAPtoNIL map2nil/maptonil.cpp)
 target_link_libraries(MAPtoNIL PRIVATE world_geometry nod_editor_document)
-add_executable(MAPtoNSD map2nil/maptonsd.cpp)
+add_executable(MAPtoNSD map2nil/maptonsd_main.cpp)
 target_link_libraries(MAPtoNSD PRIVATE nod_scene_bridge nod_editor_document)
 add_executable(MAPtoNPD map2nil/maptonpd.cpp)
 target_link_libraries(MAPtoNPD PRIVATE nod_scene_bridge nod_editor_document)
@@ -62,10 +68,10 @@ foreach(target nmb_compiler NODtoNMB MAPtoNIL MAPtoNSD MAPtoNPD)
     target_compile_features(${target} PUBLIC cxx_std_17)
 endforeach()
 set_target_properties(NODscene nod_scene_bridge PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
-foreach(tool NILtoMAP NODscene NODtoNMB MAPtoNIL MAPtoNSD MAPtoNPD)
+foreach(tool NILtoMAP NODscene NODScript NODtoNMB MAPtoNIL MAPtoNSD MAPtoNPD)
     target_link_libraries(${tool} PRIVATE nodsdk_app_icon)
 endforeach()
-foreach(tool NILtoMAP nil_map NODscene nod_scene_bridge nod_tool_cli nmb_compiler NODtoNMB MAPtoNIL MAPtoNSD MAPtoNPD mopp_compiler world_geometry)
+foreach(tool NILtoMAP nil_map NODscene NODScript nod_scene_bridge nod_tool_cli nmb_compiler NODtoNMB MAPtoNIL MAPtoNSD MAPtoNPD mopp_compiler world_geometry)
     set_target_properties(${tool} PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
     if(MSVC)
         target_compile_options(${tool} PRIVATE /W4)

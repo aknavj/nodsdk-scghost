@@ -6,6 +6,9 @@ maps-out/
 .deps/
 cmake/
 assets/
+/OpenNOD-SDK-*-windows-x64/
+/OpenNOD-SDK-*-windows-x64.zip
+.python-deps/
 
 # cmake generated
 CMakeCache.txt
