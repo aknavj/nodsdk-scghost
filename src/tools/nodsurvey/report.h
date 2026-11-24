@@ -104,6 +104,7 @@ namespace survey {
 	bool surveyNsa(const fs::path &buildRoot, std::string &json);
 	bool surveyNms(const fs::path &buildRoot, std::string &json);
 	bool surveyNot(const fs::path &buildRoot, std::string &json);
+	bool surveyDds(const fs::path &buildRoot, std::string &json);
 
 } // namespace survey
 
