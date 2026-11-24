@@ -33,6 +33,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // goes only to <out.json>.
 
 #include "NADParser.h"
+#include "NODCheck.h"
 #include "NODParser.h"
 #include "report.h"
 
@@ -44,8 +45,6 @@ using survey::num;
 using survey::quote;
 
 namespace {
-
-	uint16_t u16(const uint8_t *p) { return uint16_t(p[0] | (p[1] << 8)); }
 
 	// ---- NOD --------------------------------------------------------------
 
@@ -77,52 +76,17 @@ namespace {
 		if(m.color_count) ++r.colorFiles;
 		for(uint32_t s = 0; s < m.vertex_set_count; ++s) ++r.vertexTypes[m.vertex_sets[s].type];
 
-		// bones: a parent is an earlier bone, or 0xFF
-		for(uint32_t b = 0; b < m.bone_count; ++b) {
-			const uint8_t parent = m.bones[b].parent;
-			if(parent != 0xFF && parent >= b) fault(r, name, -1, "bone " + std::to_string(b) + " has parent " + std::to_string(parent));
-		}
-
-		uint32_t indexSum = 0;
-		uint32_t advance[NODParser::MAX_VERTEX_SETS] = {0};
 		for(uint32_t g = 0; g < m.mesh_group_count; ++g) {
 			++r.groups;
 			const uint8_t *raw = m.raw_data + m.mesh_group_offset + size_t(g) * 56;
-			const auto &group = m.mesh_groups[g];
-			for(uint32_t lod = 0; lod < NODParser::MAX_LODS; ++lod) indexSum += u16(raw + 4 + lod * 6) + u16(raw + 6 + lod * 6);
-			const uint16_t groupVerts = u16(raw + 0x1C);
-			advance[group.vertex_set_index] += groupVerts;
 			++r.byte1E[raw[0x1E]];
 			++r.byte1F[raw[0x1F]];
 			++r.byte20[raw[0x20]];
 			++r.byte37[raw[0x37]];
-			++r.groupBones[group.num_bones];
-
-			if(group.shader_index >= m.shader_count) fault(r, name, int(g), "material " + std::to_string(group.shader_index));
-			for(uint32_t p = 0; p < group.num_bones; ++p)
-				if(group.a_bones[p] >= m.bone_count) fault(r, name, int(g), "palette entry " + std::to_string(group.a_bones[p]));
-			// an empty group (no indices, no vertices) draws nothing; its bones say nothing
-			const bool empty = groupVerts == 0 && group.lods[0].strip_count + group.lods[0].list_count == 0;
-			if(empty) ++r.emptyGroups;
-			// a group with one bone draws rigid vertices; more bones, skinned ones
-			const uint32_t baseType = m.vertex_sets[group.vertex_set_index].type % 3;
-			if(!empty && (group.num_bones <= 1) != (baseType == 0))
-				fault(r, name, int(g), std::to_string(group.num_bones) + " bones on vertex type " + std::to_string(m.vertex_sets[group.vertex_set_index].type));
-
-			// detail level 0: every index names a vertex of this group
-			const auto &lod = group.lods[0];
-			const uint32_t end = lod.list_start + lod.list_count;
-			uint32_t highest = 0;
-			for(uint32_t i = lod.strip_start; i < end && i < m.index_count; ++i) highest = std::max<uint32_t>(highest, m.indices[i]);
-			if(end > lod.strip_start && highest >= groupVerts)
-				fault(r, name, int(g), "index " + std::to_string(highest) + " of " + std::to_string(groupVerts) + " vertices");
+			++r.groupBones[m.mesh_groups[g].num_bones];
+			if(nodGroupEmpty(m, g)) ++r.emptyGroups;
 		}
-		if(indexSum != m.index_count)
-			fault(r, name, -1, "groups hold " + std::to_string(indexSum) + " of " + std::to_string(m.index_count) + " indices");
-		for(uint32_t s = 0; s < m.vertex_set_count; ++s)
-			if(advance[s] != m.vertex_sets[s].count)
-				fault(r, name, -1, "groups hold " + std::to_string(advance[s]) + " of " + std::to_string(m.vertex_sets[s].count) +
-									   " vertices of set " + std::to_string(s));
+		for(const auto &f : nodFaults(m)) fault(r, name, f.group, f.what);
 	}
 
 	std::string nodJson(const NodReport &r) {
