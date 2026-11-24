@@ -35,6 +35,7 @@ namespace nodexport {
 	bool exportNod(const char *in, const char *outBin, std::string &json);
 	bool exportNad(const char *in, std::string &json);
 	bool exportMaterials(const char *build, const char *names, std::string &json);
+	bool exportCatalog(const char *build, std::string &json);
 
 	inline std::string refusal(const char *format, const std::string &error) {
 		return std::string("{\"format\":\"") + format + "\",\"error\":" + survey::quote(error) + "}\n";

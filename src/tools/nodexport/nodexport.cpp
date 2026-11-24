@@ -24,6 +24,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 //   NODExport nod <in.nod> <out.json> <out.bin>
 //   NODExport nad <in.nad> <out.json>
 //   NODExport materials <build> <names.txt> <out.json>
+//   NODExport catalog <build> <out.json>
 //
 // Exit 0 when exported; 1 when the input is refused (out.json then holds
 // {"format", "error"}); 2 on a usage or output error.
@@ -35,7 +36,8 @@ namespace {
 	int usage() {
 		std::fprintf(stderr, "usage: NODExport nod <in.nod> <out.json> <out.bin>\n"
 							 "       NODExport nad <in.nad> <out.json>\n"
-							 "       NODExport materials <build> <names.txt> <out.json>\n");
+							 "       NODExport materials <build> <names.txt> <out.json>\n"
+							 "       NODExport catalog <build> <out.json>\n");
 		return 2;
 	}
 
@@ -56,6 +58,9 @@ int main(int argc, char **argv) {
 	} else if(mode == "materials" && argc == 5) {
 		out = argv[4];
 		ok	= nodexport::exportMaterials(argv[2], argv[3], json);
+	} else if(mode == "catalog" && argc == 4) {
+		out = argv[3];
+		ok	= nodexport::exportCatalog(argv[2], json);
 	} else {
 		return usage();
 	}
