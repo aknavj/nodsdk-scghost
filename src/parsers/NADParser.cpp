@@ -150,6 +150,8 @@ int NADParser::parse(const char *filePath) {
 		}
 	}
 
+	clip.bytes_read = off;
+
 	uint32_t rotCount = 0, posCount = 0, totalKeys = 0;
 	for(uint32_t i = 0; i < clip.num_bone_tracks; ++i) {
 		totalKeys += clip.bone_tracks[i].num_keys;

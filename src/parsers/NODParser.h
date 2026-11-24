@@ -132,6 +132,10 @@ class NODParser : public IAssetParser {
 			uint32_t mesh_group_count;
 
 			uint32_t marker_count;
+			uint32_t blend_count; // blend data entries after the markers (24 bytes each)
+			uint32_t color_count; // optional vertex colours after the blend data (uint32 each)
+			size_t mesh_group_offset; // file offset of the first mesh group
+			size_t bytes_read; // bytes the layout explains; file_size when nothing is left over
 
 			uint8_t *raw_data;
 			size_t raw_data_size;

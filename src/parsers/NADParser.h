@@ -91,6 +91,7 @@ class NADParser : public IAssetParser {
 			ShapeTrack *shape_tracks; // malloc'd array
 
 			size_t file_size;
+			size_t bytes_read; // bytes the layout explains; file_size when nothing is left over
 		};
 
 		NADParser() { memset(&clip, 0, sizeof(clip)); }
