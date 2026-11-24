@@ -103,6 +103,7 @@ namespace survey {
 	// Mode entry points (nodsurvey_nsa.cpp, ...): fill `json`, return true when clean.
 	bool surveyNsa(const fs::path &buildRoot, std::string &json);
 	bool surveyNms(const fs::path &buildRoot, std::string &json);
+	bool surveyNot(const fs::path &buildRoot, std::string &json);
 
 } // namespace survey
 
