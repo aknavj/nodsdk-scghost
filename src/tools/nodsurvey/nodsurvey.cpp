@@ -232,7 +232,7 @@ namespace {
 	}
 
 	int usage() {
-		std::fprintf(stderr, "usage: NODSurvey nod|nad <folder> <out.json>\n       NODSurvey nsa <build> <out.json>\n");
+		std::fprintf(stderr, "usage: NODSurvey nod|nad <folder> <out.json>\n       NODSurvey nsa|nms <build> <out.json>\n");
 		return 2;
 	}
 
@@ -242,7 +242,7 @@ int main(int argc, char **argv) {
 	if(argc != 4) return usage();
 	const std::string kind = argv[1];
 	const fs::path dir	   = argv[2];
-	if((kind != "nod" && kind != "nad" && kind != "nsa") || !fs::is_directory(dir)) return usage();
+	if((kind != "nod" && kind != "nad" && kind != "nsa" && kind != "nms") || !fs::is_directory(dir)) return usage();
 
 	std::string json;
 	bool clean = false;
@@ -256,8 +256,10 @@ int main(int argc, char **argv) {
 		for(const auto &path : filesOf(dir, ".nad")) surveyNad(path, r);
 		json  = nadJson(r);
 		clean = r.refused.empty() && r.leftover.empty();
-	} else {
+	} else if(kind == "nsa") {
 		clean = survey::surveyNsa(dir, json);
+	} else {
+		clean = survey::surveyNms(dir, json);
 	}
 
 	if(!survey::writeFile(argv[3], json)) {

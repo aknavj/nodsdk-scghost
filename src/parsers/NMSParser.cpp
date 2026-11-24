@@ -77,10 +77,17 @@ int NMSParser::parse(const char *filePath) {
 		strncpy(e->motion_name, tok, 127);
 
 		tok = strtok(nullptr, " \t");
-		if(!tok) continue;
+		if(!tok) {
+			++ms.short_lines;
+			continue;
+		}
 		strncpy(e->animation_file, tok, 127);
 
-		while((tok = strtok(nullptr, " \t")) != nullptr && e->flag_count < MAX_FLAGS) {
+		while((tok = strtok(nullptr, " \t")) != nullptr) {
+			if(e->flag_count >= MAX_FLAGS) {
+				++ms.dropped_flags;
+				continue;
+			}
 			strncpy(e->flags[e->flag_count], tok, 63);
 			e->flag_count++;
 		}

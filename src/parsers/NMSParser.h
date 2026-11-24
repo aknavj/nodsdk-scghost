@@ -49,6 +49,8 @@ class NMSParser : public IAssetParser {
 			size_t header_comment_len;
 			MotionEntry *entries; // malloc'd array
 			uint32_t entry_count;
+			uint32_t short_lines; // lines with a motion name but no clip file, not kept
+			uint32_t dropped_flags; // flags past MAX_FLAGS, not kept
 		};
 
 		NMSParser() { 
