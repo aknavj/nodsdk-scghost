@@ -19,78 +19,33 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 ===========================================================================
 */
 
-// NODSurvey: read every model or clip of a folder with the SDK parsers and
-// report, as JSON, what the files hold and where they do not fit the layout.
+// NODSurvey: read every file of one kind with the SDK parsers and report, as
+// JSON, what the files hold and where they do not fit the layout.
 //
 //   NODSurvey nod <folder> <out.json>   every .nod: groups, palettes, bones
 //   NODSurvey nad <folder> <out.json>   every .nad: tracks, keys, key joins
+//   NODSurvey nsa <build> <out.json>    every .nsa and .nas, and how each
+//                                       material name of 3D/Models is found
 //
 // Exit 0 when every file was read; 1 when a file was refused or left bytes
-// over; 2 on a usage or output error. The parsers' own log lines go to the
-// console; the report goes only to <out.json>.
+// over (nsa: a block not closed, or a property dropped); 2 on a usage or
+// output error. The parsers' own log lines go to the console; the report
+// goes only to <out.json>.
 
 #include "NADParser.h"
 #include "NODParser.h"
-
-#include <algorithm>
-#include <cmath>
-#include <cstdio>
-#include <filesystem>
-#include <map>
-#include <string>
-#include <vector>
+#include "report.h"
 
 namespace fs = std::filesystem;
+using survey::filesOf;
+using survey::histogram;
+using survey::list;
+using survey::num;
+using survey::quote;
 
 namespace {
 
-	std::string lower(std::string s) {
-		std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-		return s;
-	}
-
-	// Every regular file of `dir` with extension `ext` (lower case, with the dot), sorted.
-	std::vector<fs::path> filesOf(const fs::path &dir, const std::string &ext) {
-		std::vector<fs::path> out;
-		for(const auto &entry : fs::directory_iterator(dir))
-			if(entry.is_regular_file() && lower(entry.path().extension().string()) == ext) out.push_back(entry.path());
-		std::sort(out.begin(), out.end());
-		return out;
-	}
-
-	std::string quote(const std::string &s) {
-		std::string out = "\"";
-		for(char c : s) {
-			if(c == '"' || c == '\\') out += '\\';
-			if(static_cast<unsigned char>(c) < 0x20) continue;
-			out += c;
-		}
-		return out + "\"";
-	}
-
-	std::string histogram(const std::map<uint32_t, uint32_t> &h) {
-		std::string out = "{";
-		for(const auto &[key, count] : h) {
-			if(out.size() > 1) out += ",";
-			out += "\"" + std::to_string(key) + "\":" + std::to_string(count);
-		}
-		return out + "}";
-	}
-
-	std::string list(const std::vector<std::string> &items) {
-		std::string out = "[";
-		for(size_t i = 0; i < items.size(); ++i) out += (i ? "," : "") + items[i];
-		return out + "]";
-	}
-
 	uint16_t u16(const uint8_t *p) { return uint16_t(p[0] | (p[1] << 8)); }
-
-	std::string num(double v) {
-		if(!std::isfinite(v)) return "null";
-		char buf[32];
-		std::snprintf(buf, sizeof buf, "%.6g", v);
-		return buf;
-	}
 
 	// ---- NOD --------------------------------------------------------------
 
@@ -277,7 +232,7 @@ namespace {
 	}
 
 	int usage() {
-		std::fprintf(stderr, "usage: NODSurvey nod|nad <folder> <out.json>\n");
+		std::fprintf(stderr, "usage: NODSurvey nod|nad <folder> <out.json>\n       NODSurvey nsa <build> <out.json>\n");
 		return 2;
 	}
 
@@ -287,7 +242,7 @@ int main(int argc, char **argv) {
 	if(argc != 4) return usage();
 	const std::string kind = argv[1];
 	const fs::path dir	   = argv[2];
-	if((kind != "nod" && kind != "nad") || !fs::is_directory(dir)) return usage();
+	if((kind != "nod" && kind != "nad" && kind != "nsa") || !fs::is_directory(dir)) return usage();
 
 	std::string json;
 	bool clean = false;
@@ -296,15 +251,16 @@ int main(int argc, char **argv) {
 		for(const auto &path : filesOf(dir, ".nod")) surveyNod(path, r);
 		json  = nodJson(r);
 		clean = r.refused.empty() && r.leftover.empty();
-	} else {
+	} else if(kind == "nad") {
 		NadReport r;
 		for(const auto &path : filesOf(dir, ".nad")) surveyNad(path, r);
 		json  = nadJson(r);
 		clean = r.refused.empty() && r.leftover.empty();
+	} else {
+		clean = survey::surveyNsa(dir, json);
 	}
 
-	FILE *out = std::fopen(argv[3], "wb");
-	if(!out || std::fwrite(json.data(), 1, json.size(), out) != json.size() || std::fclose(out) != 0) {
+	if(!survey::writeFile(argv[3], json)) {
 		std::fprintf(stderr, "NODSurvey: cannot write %s\n", argv[3]);
 		return 2;
 	}

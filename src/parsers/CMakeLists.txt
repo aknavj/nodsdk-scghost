@@ -7,6 +7,7 @@ set(PARSER_SOURCES
     DDSParser.cpp
     NADParser.cpp
     NODParser.cpp
+    NODMaterialLibrary.cpp
     NMSParser.cpp
     TerrainParser.cpp
     NILParser.cpp
