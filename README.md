@@ -26,6 +26,16 @@ preservation project.
 | `NODtoNMB` | Bundle NOD/NOC models into NMB files |
 | `NODTemplates` | Query template/instance metadata and perform validated shared-property edits |
 
+Data tools for external integrations (JSON output, e.g. for web viewers):
+
+| Tool | Purpose |
+|---|---|
+| `NODSurvey` | Check every NOD, NAD, NSA, NMS, NOT or DDS file of a build against the known layout |
+| `NODExport` | Export models, animation clips, materials and a build catalog as JSON (models also get a binary vertex/index buffer) |
+
+`build.sh` compiles both into `.build/cmake/` (`.build/cmake/Release/` with
+MSVC). It does not copy them to `build-out/`. See the [CLI reference](docs/CLI.md).
+
 The repository also includes the [parser library](src/parsers/), a
 [Blender plugin](plugin/bpy-nodsdk-scghost/), and
 [detailed tool documentation](src/tools/README.md).
