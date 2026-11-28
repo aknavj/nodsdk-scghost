@@ -53,19 +53,30 @@ int NSAParser::parse(const char *filePath) {
 	Material *cur  = nullptr;
 	int braceDepth = 0;
 	char line[512];
+	uint32_t lineNo = 0;
 
 	while(fgets(line, sizeof(line), f)) {
+		++lineNo;
 		size_t len = strlen(line);
 		while(len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) line[--len] = '\0';
 
 		char *trimmed = TrimInPlace(line);
 		if(trimmed[0] == '\0') continue;
+		// a comment line: the engine skips lines that start with ';' or '/'
+		if(trimmed[0] == ';' || trimmed[0] == '/') {
+			++md.comment_lines;
+			continue;
+		}
 
 		if(strcmp(trimmed, "{") == 0) {
+			++md.open_braces;
+			if(braceDepth > 0 && cur) ++cur->nested_blocks;
 			++braceDepth;
 			continue;
 		}
 		if(strcmp(trimmed, "}") == 0) {
+			++md.close_braces;
+			if(braceDepth == 0 && md.stray_close_line == 0) md.stray_close_line = lineNo;
 			--braceDepth;
 			if(braceDepth <= 0) {
 				cur		   = nullptr;
@@ -82,7 +93,10 @@ int NSAParser::parse(const char *filePath) {
 			cur = &md.materials[md.material_count++];
 			memset(cur, 0, sizeof(Material));
 			strncpy(cur->name, trimmed, 127);
-		} else if(cur && cur->prop_count < MAX_PROPS) {
+			cur->line = lineNo;
+		} else if(cur && cur->prop_count >= MAX_PROPS) {
+			++cur->dropped_props;
+		} else if(cur) {
 
 			MaterialProperty *p = &cur->props[cur->prop_count];
 			memset(p, 0, sizeof(MaterialProperty));
@@ -104,6 +118,7 @@ int NSAParser::parse(const char *filePath) {
 			cur->prop_count++;
 		}
 	}
+	if(braceDepth > 0 && cur) md.unclosed_line = cur->line;
 
 	fclose(f);
 	return 1;

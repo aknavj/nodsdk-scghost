@@ -46,6 +46,9 @@ class NSAParser : public IAssetParser {
 			char name[128];
 			MaterialProperty props[MAX_PROPS];
 			uint32_t prop_count;
+			uint32_t line; // line of the name in the file, from 1
+			uint32_t dropped_props; // property lines past MAX_PROPS, not kept
+			uint32_t nested_blocks; // '{' inside the block (passes, stages); their lines are kept as properties
 		};
 
 		/*
@@ -53,6 +56,11 @@ class NSAParser : public IAssetParser {
 		struct MaterialsData {
 			Material *materials;
 			uint32_t material_count;
+			uint32_t comment_lines; // lines that start with ';' or '/' (after blanks), skipped
+			uint32_t open_braces; // '{' lines outside comments
+			uint32_t close_braces; // '}' lines outside comments
+			uint32_t unclosed_line; // line of the name of a block the file does not close; 0 when all close
+			uint32_t stray_close_line; // first '}' with no block open; 0 when none
 		};
 
 		NSAParser() { 

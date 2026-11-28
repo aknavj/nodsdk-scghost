@@ -233,6 +233,7 @@ int NODParser::parseOwnedBuffer(uint8_t *data, size_t file_size) {
 	}
 
 	// mesh groups (56 bytes each)
+	m.mesh_group_offset = off;
 	m.mesh_group_count = m.header.mesh_group_count;
 	if(size_t(m.mesh_group_count) * 56 > file_size - off) return fail("Truncated NOD mesh groups");
 	if(m.mesh_group_count > 0 && off + m.mesh_group_count * 56 <= file_size) {
@@ -299,6 +300,25 @@ int NODParser::parseOwnedBuffer(uint8_t *data, size_t file_size) {
 	} else if(off != file_size) {
 		return fail("Truncated NOD marker count");
 	}
+
+	// blend data (count + 24 bytes each), then optional vertex colours
+	// (count + uint32 each). A file may end before either; bytes_read says
+	// how far the layout explains the file, so a caller can see leftovers.
+	if(off + 4 <= file_size) {
+		const uint32_t blends = FileUtils::readUInt32(data, off);
+		if(size_t(blends) <= (file_size - off - 4) / 24) {
+			m.blend_count = blends;
+			off += 4 + size_t(blends) * 24;
+			if(off + 4 <= file_size) {
+				const uint32_t colors = FileUtils::readUInt32(data, off);
+				if(size_t(colors) <= (file_size - off - 4) / 4) {
+					m.color_count = colors;
+					off += 4 + size_t(colors) * 4;
+				}
+			}
+		}
+	}
+	m.bytes_read = off;
 
 	// print summary
 	fprintf(stderr, "[NOD] buffer: flags=0x%X, %u shaders, %u bones, %u vertex sets", m.header.flags, m.shader_count,
